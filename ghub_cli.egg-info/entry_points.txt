@@ -1,0 +1,2 @@
+[console_scripts]
+ghub = ghub_cli.cli:cli
