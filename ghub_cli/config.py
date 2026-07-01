@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 DEFAULT_BASE_URL = "http://100.117.45.120:8000"
+
 CONFIG_DIR = Path.home() / ".config" / "ghub-cli"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
