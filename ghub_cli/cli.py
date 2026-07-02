@@ -4,7 +4,6 @@ Genomic Hub CLI
 Cliente de línea de comandos para interactuar con la API de genomic-hub.
 """
 import sys
-
 import click
 
 from .client import GenomicHubClient, APIError
@@ -14,10 +13,57 @@ from .utils import poll_task, pretty_json, print_api_error, FAILURE_STATES
 MAX_BULK_IDS = 120
 CONTACT_EMAIL = "leticiavega@icar.unam.mx"
 
-
 def get_client(ctx) -> GenomicHubClient:
     return ctx.obj["client"]
 
+# =========================================
+# HELPER: BÚSQUEDA INTELIGENTE
+# =========================================
+def _smart_search(client, target_id):
+    """
+    Pide los datos al backend. Si el backend responde con un task_id,
+    significa que lanzó una sincronización silenciosa. Esperamos y reintentamos.
+    """
+    try:
+        result = client.search(target_id)
+        
+        # Detectamos si el backend activó la sincronización silenciosa
+        if "task_id" in result:
+            task_id = result["task_id"]
+            final_state = poll_task(
+                client, 
+                task_id, 
+                label=f"Sincronizando {target_id}...",
+                show_result=False
+            )
+            
+            if final_state and final_state.get("status") not in FAILURE_STATES:
+                # Volvemos a pedir los datos ahora que ya existen
+                result = client.search(target_id)
+            else:
+                click.secho("\n✗ La sincronización en segundo plano falló.", fg="red")
+                return
+
+        click.echo(pretty_json(result.get("data", result)))
+    except APIError as e:
+        print_api_error(e)
+        
+@click.argument("target_ids", nargs=-1, required=True)
+@click.pass_context
+def search(ctx, target_ids):
+    """
+    Busca uno o varios IDs. Si se pasa más de uno, activa el modo bulk.
+    Ejemplo: ghub search SRR1972791
+    Ejemplo: ghub search SRR1972791 SRR1972792 SRR000001
+    """
+    client = get_client(ctx)
+    
+    # Si es solo un ID, usamos el flujo simple y rápido
+    if len(target_ids) == 1:
+        _smart_search(client, target_ids[0])
+    # Si son varios, usamos la lógica de procesamiento por lotes
+    else:
+        _smart_search(client, list(target_ids))
 
 # =========================================
 # GRUPO RAÍZ — menú interactivo de bienvenida
@@ -76,7 +122,7 @@ def _menu_consulta(ctx):
     click.secho("── Consulta ─────────────────────────────────────────", fg="cyan")
     click.echo()
     click.echo("  [1]  Buscar en NCBI por texto libre")
-    click.echo("  [2]  Ver datos locales de un ID")
+    click.echo("  [2]  Ver datos locales de un ID (con auto-sincronización)")
     click.echo("  [3]  Verificar si un ID existe localmente")
     click.echo("  [0]  Volver al menú principal")
     click.echo()
@@ -98,12 +144,8 @@ def _menu_consulta(ctx):
             print_api_error(e)
     elif opcion == "2":
         target_id = click.prompt("ID a consultar (BioProject, SRR, etc.)")
-        try:
-            result = client.search(target_id)
-            click.echo()
-            click.echo(pretty_json(result["data"]))
-        except APIError as e:
-            print_api_error(e)
+        click.echo()
+        _smart_search(client, target_id)
     elif opcion == "3":
         target_id = click.prompt("ID a verificar")
         try:
@@ -133,7 +175,7 @@ def _flujo_descarga(ctx):
     click.secho("── Descarga de secuencias ───────────────────────────", fg="cyan")
     click.echo()
 
-    # --- Paso 1: credenciales (solo se piden si no están guardadas) ---
+    # --- Paso 1: credenciales ---
     email = cfg.get("email")
     if email:
         click.echo(f"  Email registrado: {click.style(email, fg='green')}")
@@ -142,33 +184,22 @@ def _flujo_descarga(ctx):
 
     if not email:
         email = click.prompt("  Ingresa tu correo institucional")
-
-        # Validar contra la BD antes de continuar
         click.echo("  Verificando acceso...")
         try:
-            # Hacemos una llamada de prueba con un run_id dummy para comprobar el email.
-            # Si el error es NOT_FOUND (run no existe) el email sí está autorizado.
-            # Si el error es BAD_REQUEST/Acceso denegado, el email no está registrado.
             client.request_download("__check__", email)
-            # Si llega aquí (200) también está ok — raro con __check__ pero lo manejamos
             _guardar_email(cfg, email)
         except APIError as e:
             if e.status_code == 400 and "denegado" in e.detail.lower():
                 click.echo()
                 click.secho("  ✗ Este correo no está registrado.", fg="red", bold=True)
-                click.secho(
-                    f"  Para solicitar acceso escribe a: {CONTACT_EMAIL}",
-                    fg="yellow",
-                )
+                click.secho(f"  Para solicitar acceso escribe a: {CONTACT_EMAIL}", fg="yellow")
                 click.echo()
                 if click.confirm("  ¿Intentar con otro correo?", default=True):
                     _flujo_descarga(ctx)
                 return
             elif e.status_code == 404 or "no existe" in e.detail.lower():
-                # El run __check__ no existe pero el email sí pasó la validación
                 _guardar_email(cfg, email)
             else:
-                # Error de red u otro inesperado
                 print_api_error(e)
                 return
 
@@ -184,7 +215,6 @@ def _flujo_descarga(ctx):
         click.secho("  ✓ Código enviado a tu correo.", fg="green")
     except APIError as e:
         if e.status_code == 400 and "denegado" in e.detail.lower():
-            # El email guardado fue revocado desde que se guardó
             click.secho("  ✗ Tu correo ya no tiene acceso autorizado.", fg="red")
             click.secho(f"  Contacta a: {CONTACT_EMAIL}", fg="yellow")
             cfg.pop("email", None)
@@ -209,10 +239,6 @@ def _flujo_descarga(ctx):
     click.echo()
     task_id = verify_result.get("task_id")
     if task_id and task_id not in ("ALREADY_CONFIRMED", "LINKED_TO_EXISTING_DOWNLOAD"):
-        # Las descargas (prefetch + fasterq-dump + compresión) pueden tardar
-        # hasta ~30 min. Un timeout aquí NO significa que la tarea falló -
-        # sigue corriendo en el servidor; solo dejamos de esperar en este
-        # comando y avisamos cómo retomarla.
         final = poll_task(
             client,
             task_id,
@@ -222,10 +248,7 @@ def _flujo_descarga(ctx):
             show_result=False,
         )
         if final is None:
-            click.secho(
-                "  La descarga sigue preparándose en el servidor. Retómala con:",
-                fg="yellow",
-            )
+            click.secho("  La descarga sigue preparándose en el servidor. Retómala con:", fg="yellow")
             click.secho(f"    ghub task {task_id} --poll", fg="yellow", bold=True)
             return
         if final.get("status") in FAILURE_STATES:
@@ -239,11 +262,7 @@ def _flujo_descarga(ctx):
     # --- Paso 6: confirmar descarga y ruta ---
     click.echo()
     click.secho("  ✓ Archivo listo para descargar.", fg="green")
-    output = click.prompt(
-        "  Ruta de destino (Enter para usar el directorio actual)",
-        default="",
-        show_default=False,
-    )
+    output = click.prompt("  Ruta de destino (Enter para usar el directorio actual)", default="", show_default=False)
     output = output.strip() or None
 
     click.echo("  Descargando...")
@@ -273,7 +292,6 @@ def _guardar_email(cfg: dict, email: str):
 def config():
     """Configuración persistente del CLI."""
 
-
 @config.command("set-url")
 @click.argument("url")
 def config_set_url(url):
@@ -283,14 +301,12 @@ def config_set_url(url):
     save_config(cfg)
     click.echo(f"URL base guardada: {cfg['base_url']}")
 
-
 @config.command("show")
 def config_show():
     """Muestra la configuración actual."""
     cfg = load_config()
     click.echo(f"base_url : {cfg.get('base_url', DEFAULT_BASE_URL)}")
     click.echo(f"email    : {cfg.get('email', '(no guardado)')}")
-
 
 @cli.command("sync")
 @click.argument("project_id")
@@ -305,7 +321,6 @@ def sync_single(ctx, project_id):
     except APIError as e:
         print_api_error(e)
         sys.exit(1)
-
 
 @cli.command("sync-bulk")
 @click.argument("project_ids", nargs=-1, required=True)
@@ -337,6 +352,73 @@ def sync_bulk(ctx, project_ids, from_file, poll):
         print_api_error(e)
         sys.exit(1)
 
+# =========================================
+# NUEVO COMANDO: Búsqueda por lista de IDs
+# =========================================
+@cli.command("search-bulk")
+@click.argument("project_ids", nargs=-1, required=True)
+@click.option("--page", default=1, show_default=True, help="Número de página a mostrar.")
+@click.option("--page-size", default=20, show_default=True, help="Resultados por página.")
+@click.pass_context
+def search_bulk_cmd(ctx, project_ids, page, page_size):
+    """
+    Consulta múltiples IDs. Sincroniza silenciosamente los que falten en la BD local.
+    """
+    client = get_client(ctx)
+    ids = list(project_ids)
+    
+    if len(ids) > 120:
+        click.secho(f"✗ Máximo 120 IDs por solicitud.", fg="red")
+        sys.exit(1)
+
+    try:
+        result = client.search_bulk(ids, page=page, page_size=page_size)
+        
+        # Manejo de la sincronización silenciosa (HTTP 202 del backend)
+        if "task_id" in result:
+            master_task_id = result["task_id"]
+            
+            # 1. Esperamos a la tarea "Maestra" (la que encola los trabajos)
+            final_state = poll_task(
+                client, 
+                master_task_id, 
+                label="Planificando descargas en el servidor...", 
+                show_result=False
+            )
+            
+            if final_state and final_state.get("status") not in FAILURE_STATES:
+                
+                # === EL TRUCO CONTRA LA CONDICIÓN DE CARRERA ===
+                # 2. Extraemos las subtareas (los verdaderos workers) y las esperamos
+                sub_tasks = final_state.get("data", [])
+                if isinstance(sub_tasks, list):
+                    for i, sub in enumerate(sub_tasks):
+                        if isinstance(sub, dict) and "task_id" in sub:
+                            poll_task(
+                                client,
+                                sub["task_id"],
+                                label=f"Descargando de NCBI ({i+1}/{len(sub_tasks)})...",
+                                show_result=False
+                            )
+                # ===============================================
+
+                # 3. Ahora que TODOS los workers terminaron, reintentamos la consulta
+                result = client.search_bulk(ids, page=page, page_size=page_size)
+                
+                # === VALIDACIÓN: PREVENIR BUCLE INFINITO ===
+                if "task_id" in result:
+                    click.secho("\n✗ Advertencia: Uno o más IDs proporcionados no existen en la NCBI y no pudieron ser procesados.", fg="yellow")
+                    sys.exit(1)
+            else:
+                click.secho("\n✗ La sincronización en segundo plano falló para algunos IDs.", fg="red")
+                sys.exit(1)
+
+        # Mostrar resultados paginados
+        click.secho(f"\nPágina {result['page']} de {(result['total'] + result['page_size'] - 1) // result['page_size']} (Total IDs procesados: {result['total']})", fg="cyan")
+        click.echo(pretty_json(result.get("data", [])))
+    except APIError as e:
+        print_api_error(e)
+        sys.exit(1)
 
 @cli.command("check")
 @click.argument("target_id")
@@ -355,20 +437,13 @@ def check(ctx, target_id):
         print_api_error(e)
         sys.exit(1)
 
-
 @cli.command("search")
 @click.argument("target_id")
 @click.pass_context
 def search(ctx, target_id):
-    """Obtiene datos locales de TARGET_ID."""
+    """Obtiene datos locales de TARGET_ID, o los sincroniza si no existen."""
     client = get_client(ctx)
-    try:
-        result = client.search(target_id)
-        click.echo(pretty_json(result["data"]))
-    except APIError as e:
-        print_api_error(e)
-        sys.exit(1)
-
+    _smart_search(client, target_id)
 
 @cli.command("explore")
 @click.argument("query")
@@ -387,7 +462,6 @@ def explore(ctx, query, page, page_size):
         print_api_error(e)
         sys.exit(1)
 
-
 @cli.command("download")
 @click.argument("run_id")
 @click.option("--email", required=True, help="Correo institucional ya registrado.")
@@ -396,21 +470,8 @@ def explore(ctx, query, page, page_size):
 def download(ctx, run_id, email, output):
     """
     Descarga RUN_ID para --email, sin pasar por el menú interactivo.
-
-    Si ya tienes una autorización CONFIRMADA para este run_id + email (por
-    ejemplo porque ya pasaste el flujo de OTP antes, o el CLI se quedó
-    esperando y la tarea terminó del lado del servidor — como cuando te
-    llega el correo de "descarga completada"), este comando descarga el
-    archivo directo, sin pedir OTP de nuevo.
-
-    Si es la primera vez que este email pide este archivo, sí hace falta
-    el flujo completo con OTP — usa el menú interactivo (`ghub`, opción 2)
-    para eso.
     """
     client = get_client(ctx)
-
-    # Intento directo: si ya hay autorización confirmada y el archivo está
-    # listo, esto basta y no hace falta tocar /download/request ni OTP.
     click.echo("  Verificando si el archivo ya está disponible para este correo...")
     try:
         saved_path = client.download_file(run_id, email, output_path=output)
@@ -422,14 +483,11 @@ def download(ctx, run_id, email, output):
             click.secho(
                 "\n  Si ya hiciste el flujo de OTP para este run_id y solo se agotó el\n"
                 "  tiempo de espera, corre: ghub task <task_id> --poll\n"
-                "  (el task_id se mostró al verificar el OTP). Cuando termine, vuelve\n"
-                "  a correr este comando.\n"
-                "  Si nunca has pedido este archivo con este correo, usa el menú\n"
-                "  interactivo (`ghub`, opción 2) para completar el flujo de OTP.",
+                "  Cuando termine, vuelve a correr este comando.\n"
+                "  Si nunca has pedido este archivo, usa el menú interactivo (`ghub`, opción 2).",
                 fg="yellow",
             )
         sys.exit(1)
-
 
 @cli.command("task")
 @click.argument("task_id")
@@ -447,12 +505,6 @@ def task_status(ctx, task_id, poll):
     except APIError as e:
         print_api_error(e)
         sys.exit(1)
-
-
-# =========================================
-# Helpers
-# =========================================
-# pretty_json, print_api_error y poll_task viven en utils.py
 
 if __name__ == "__main__":
     cli()

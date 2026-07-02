@@ -83,6 +83,13 @@ class GenomicHubClient:
 
     def task_status(self, task_id: str) -> dict:
         return self._get(f"/task/{task_id}")
+    
+    def search_bulk(self, project_ids: List[str], page: int = 1, page_size: int = 20) -> dict:
+        return self._post("/search-bulk", {
+            "project_ids": project_ids,
+            "page": page,
+            "page_size": page_size
+        })
 
     # ---------- downloads ----------
     def request_download(self, run_id: str, email: str) -> dict:
@@ -117,7 +124,4 @@ class GenomicHubClient:
                     f.write(chunk)
 
         return str(dest)
-
-    # ---------- accounts ----------
-    def register_email(self, id_admin: int, name: str, email: str) -> dict:
-        return self._post("/email/create", {"id_admin": id_admin, "name": name, "email": email})
+    
