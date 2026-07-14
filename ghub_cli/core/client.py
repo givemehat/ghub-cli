@@ -64,32 +64,55 @@ class GenomicHubClient:
         resp = self._request("POST", path, json=json_body)
         return self._handle_response(resp)
 
-    # ---------- sync ----------
-    def sync(self, project_id: str) -> dict:
-        return self._post(f"/sync/{project_id}")
-
-    def sync_bulk(self, project_ids: List[str]) -> dict:
-        return self._post("/sync-bulk", {"project_ids": project_ids})
-
-    # ---------- queries ----------
-    def check(self, target_id: str) -> dict:
-        return self._get(f"/check/{target_id}")
+    # ---------- queries & sync ----------
+    def check_bulk(self, ids: List[str]) -> dict:
+        return self._post("/check-bulk", {"ids": ids})
+        
+    def sync(self, ids: List[str]) -> dict:
+        """
+        Detecta si es 1 o varios IDs para usar el endpoint adecuado.
+        También corrige el error 422 enviando la llave correcta 'ids' en el bulk.
+        """
+        if len(ids) == 1:
+            # Endpoint individual: POST /sync/{project_id} (no requiere body)
+            return self._post(f"/sync/{ids[0]}")
+        else:
+            # Endpoint masivo: POST /sync-bulk (requiere body con 'ids')
+            return self._post("/sync-bulk", {"ids": ids})
 
     def explore(self, query: str, page: int = 1, page_size: int = 20) -> dict:
         return self._get("/explore", {"q": query, "page": page, "page_size": page_size})
 
-    def search(self, target_id: str) -> dict:
-        return self._get(f"/search/{target_id}")
-
     def task_status(self, task_id: str) -> dict:
         return self._get(f"/task/{task_id}")
     
-    def search_bulk(self, project_ids: List[str], page: int = 1, page_size: int = 20) -> dict:
-        return self._post("/search-bulk", {
-            "project_ids": project_ids,
-            "page": page,
-            "page_size": page_size
-        })
+# ---------- batch jerárquicos ----------
+    def get_bioprojects_batch(self, ids: List[str], page: int = 1, page_size: int = 20, mask: dict = None) -> dict:
+        payload = {"ids": ids, "page": page, "page_size": page_size}
+        if mask: payload["mask"] = mask
+        # ANTES: "/bioprojects/experiments" -> AHORA: "/bioprojects"
+        return self._post("/bioprojects", payload)
+
+    def get_experiments_batch(self, ids: List[str], page: int = 1, page_size: int = 20, mask: dict = None) -> dict:
+        payload = {"ids": ids, "page": page, "page_size": page_size}
+        if mask: payload["mask"] = mask
+        # ANTES: "/experiments/runs" -> AHORA: "/experiments"
+        return self._post("/experiments", payload)
+
+    def get_samples_batch(self, ids: List[str], mask: dict = None) -> dict:
+        payload = {"ids": ids}
+        if mask: payload["mask"] = mask
+        # ANTES: "/samples/details" -> AHORA: "/samples"
+        return self._post("/samples", payload)
+
+    def get_runs_batch(self, ids: List[str], mask: dict = None) -> dict:
+        payload = {"ids": ids}
+        if mask: payload["mask"] = mask
+        # ANTES: "/runs/details" -> AHORA: "/runs"
+        return self._post("/runs", payload)
+
+    def export_full_branch(self, target_id: str, mask: dict = None) -> dict:
+        return self._post(f"/export/full-branch/{target_id}", mask or {})
 
     # ---------- downloads ----------
     def request_download(self, run_id: str, email: str) -> dict:
@@ -124,4 +147,3 @@ class GenomicHubClient:
                     f.write(chunk)
 
         return str(dest)
-    

@@ -13,7 +13,7 @@ import time
 
 import click
 
-from .client import GenomicHubClient, APIError
+from ..core.client import GenomicHubClient, APIError
 
 # Estados terminales que puede regresar Celery (vía /task/{task_id})
 SUCCESS_STATES = {"success", "completed", "SUCCESS"}
