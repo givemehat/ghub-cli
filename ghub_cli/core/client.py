@@ -117,9 +117,9 @@ class GenomicHubClient:
     # ---------- downloads ----------
     def request_download(self, run_id: str, email: str) -> dict:
         return self._post(f"/download/request/{run_id}", {"email": email})
-
-    def verify_otp(self, run_id: str, email: str, otp_code: str) -> dict:
-        return self._post(f"/download/verify/{run_id}", {"email": email, "otp_code": otp_code})
+    
+    def verify_otp(self, request_id: int, email: str, otp_code: str) -> dict:
+        return self._post(f"/download/verify/{request_id}", {"email": email, "otp_code": otp_code})
 
     def download_file(self, run_id: str, email: str, output_path: Optional[str] = None) -> str:
         resp = self._request("GET", f"/download/file/{run_id}", params={"email": email}, stream=True)

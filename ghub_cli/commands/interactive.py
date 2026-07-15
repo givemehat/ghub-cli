@@ -9,13 +9,15 @@ from ghub_cli.commands.search import search
 
 CONTACT_EMAIL = "leticiavega@icar.unam.mx"
 
+
 def _guardar_email(cfg: dict, email: str):
     cfg["email"] = email
     save_config(cfg)
-    click.secho(f"  ✓ Correo guardado para futuras sesiones.", fg="green")
+    click.secho("  ✓ Correo guardado para futuras sesiones.", fg="green")
+
 
 def menu_principal(ctx):
-    """Menú interactivo de bienvenida (Legacy)."""
+    """Menú interactivo de bienvenida."""
     click.clear()
     click.secho("╔══════════════════════════════════════════════════╗", fg="cyan", bold=True)
     click.secho("║         Bienvenido a Genomic Hub CLI             ║", fg="cyan", bold=True)
@@ -34,6 +36,7 @@ def menu_principal(ctx):
         _menu_consulta(ctx)
     elif opcion == "2":
         _flujo_descarga(ctx)
+
 
 def _menu_consulta(ctx):
     click.echo("\n── Consulta ─────────────────────────────────────────")
@@ -74,12 +77,14 @@ def _menu_consulta(ctx):
     if click.confirm("¿Volver al menú principal?", default=True):
         menu_principal(ctx)
 
+
 def _flujo_descarga(ctx):
     client = ctx.obj["client"]
     cfg = load_config()
 
     click.echo("\n── Descarga de secuencias ───────────────────────────\n")
 
+    # --- Paso 1: credenciales ---
     email = cfg.get("email")
     if email:
         click.echo(f"  Email registrado: {click.style(email, fg='green')}")
@@ -100,34 +105,48 @@ def _flujo_descarga(ctx):
                     _flujo_descarga(ctx)
                 return
             elif e.status_code == 404 or "no existe" in e.detail.lower():
+                # __check__ no existe en BD pero el email sí pasó — guardamos
                 _guardar_email(cfg, email)
             else:
                 print_api_error(e)
                 return
 
+    # --- Paso 2: pedir el SRR ---
     run_id = click.prompt("\n  Ingresa el ID de la secuencia a descargar (ej. SRR1972976)")
+
+    # --- Paso 3: solicitar OTP ---
     click.echo("\n  Solicitando código de verificación...")
     try:
-        client.request_download(run_id, email)
-        click.secho("  ✓ Código enviado a tu correo.", fg="green")
+        req = client.request_download(run_id, email)
+        request_id = req.get("request_id")
     except APIError as e:
         if e.status_code == 400 and "denegado" in e.detail.lower():
             click.secho("  ✗ Tu correo ya no tiene acceso autorizado.", fg="red")
+            click.secho(f"  Contacta a: {CONTACT_EMAIL}", fg="yellow")
             cfg.pop("email", None)
             save_config(cfg)
         else:
             print_api_error(e)
         return
 
+    # --- Caso especial: archivo ya listo y autorizado (request_id=None) ---
+    if request_id is None:
+        click.secho("  ✓ El archivo ya está disponible para tu correo.", fg="green")
+        _descargar_archivo(ctx, client, run_id, email)
+        return
+
+    # --- Paso 4: OTP normal ---
+    click.secho("  ✓ Código enviado a tu correo.", fg="green")
     otp_code = click.prompt("\n  Código de verificación recibido")
     click.echo("\n  Verificando código...")
     try:
-        verify_result = client.verify_otp(run_id, email, otp_code)
+        verify_result = client.verify_otp(request_id, email, otp_code)
         click.secho("  ✓ Código verificado. Iniciando preparación...", fg="green")
     except APIError as e:
         print_api_error(e)
         return
 
+    # --- Paso 5: esperar Celery ---
     task_id = verify_result.get("task_id")
     if task_id and task_id not in ("ALREADY_CONFIRMED", "LINKED_TO_EXISTING_DOWNLOAD"):
         final = poll_task(client, task_id, interval=3.0, label="Preparando archivo", show_result=False)
@@ -141,7 +160,17 @@ def _flujo_descarga(ctx):
     else:
         click.secho("  ✓ El archivo ya estaba listo.", fg="green")
 
-    output = click.prompt("\n  Ruta de destino (Enter para usar el directorio actual)", default="", show_default=False).strip() or None
+    # --- Paso 6: descarga ---
+    _descargar_archivo(ctx, client, run_id, email)
+
+
+def _descargar_archivo(ctx, client, run_id: str, email: str):
+    """Pide ruta de destino y descarga el archivo."""
+    output = click.prompt(
+        "\n  Ruta de destino (Enter para directorio actual)",
+        default="", show_default=False
+    ).strip() or None
+
     click.echo("  Descargando...")
     try:
         saved_path = client.download_file(run_id, email, output_path=output)
