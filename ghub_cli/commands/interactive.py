@@ -5,15 +5,8 @@ from ghub_cli.core.config import load_config, save_config
 from ghub_cli.core.client import APIError
 from ghub_cli.utils.formatters import print_api_error
 from ghub_cli.utils.tasks import poll_task, FAILURE_STATES
+from ghub_cli.utils.email import CONTACT_EMAIL, guardar_email, validar_y_guardar_email
 from ghub_cli.commands.search import search
-
-CONTACT_EMAIL = "leticiavega@icar.unam.mx"
-
-
-def _guardar_email(cfg: dict, email: str):
-    cfg["email"] = email
-    save_config(cfg)
-    click.secho("  ✓ Correo guardado para futuras sesiones.", fg="green")
 
 
 def menu_principal(ctx):
@@ -78,6 +71,24 @@ def _menu_consulta(ctx):
         menu_principal(ctx)
 
 
+def _tras_error(ctx, mensaje_reintento: str = "¿Quieres intentarlo de nuevo?"):
+    """
+    Punto de salida único para cualquier error dentro del flujo de descarga.
+    Nunca deja que el proceso simplemente termine: o reintenta la descarga
+    desde el inicio, o regresa al menú principal, o sale explícitamente
+    si el usuario lo pide.
+    """
+    click.echo()
+    if click.confirm(mensaje_reintento, default=True):
+        _flujo_descarga(ctx)
+        return
+    if click.confirm("¿Volver al menú principal?", default=True):
+        menu_principal(ctx)
+        return
+    click.echo("¡Hasta luego!")
+    sys.exit(0)
+
+
 def _flujo_descarga(ctx):
     client = ctx.obj["client"]
     cfg = load_config()
@@ -93,23 +104,9 @@ def _flujo_descarga(ctx):
 
     if not email:
         email = click.prompt("  Ingresa tu correo institucional")
-        click.echo("  Verificando acceso...")
-        try:
-            client.request_download("__check__", email)
-            _guardar_email(cfg, email)
-        except APIError as e:
-            if e.status_code == 400 and "denegado" in e.detail.lower():
-                click.secho("\n  ✗ Este correo no está registrado.", fg="red", bold=True)
-                click.secho(f"  Para solicitar acceso escribe a: {CONTACT_EMAIL}", fg="yellow")
-                if click.confirm("\n  ¿Intentar con otro correo?", default=True):
-                    _flujo_descarga(ctx)
-                return
-            elif e.status_code == 404 or "no existe" in e.detail.lower():
-                # __check__ no existe en BD pero el email sí pasó — guardamos
-                _guardar_email(cfg, email)
-            else:
-                print_api_error(e)
-                return
+        if not validar_y_guardar_email(client, cfg, email):
+            _tras_error(ctx, "¿Intentar con otro correo?")
+            return
 
     # --- Paso 2: pedir el SRR ---
     run_id = click.prompt("\n  Ingresa el ID de la secuencia a descargar (ej. SRR1972976)")
@@ -121,12 +118,18 @@ def _flujo_descarga(ctx):
         request_id = req.get("request_id")
     except APIError as e:
         if e.status_code == 400 and "denegado" in e.detail.lower():
-            click.secho("  ✗ Tu correo ya no tiene acceso autorizado.", fg="red")
-            click.secho(f"  Contacta a: {CONTACT_EMAIL}", fg="yellow")
+            click.secho("  ✗ Este correo no tiene autorización.", fg="red")
+            click.secho(f"  Si crees que debería tener acceso, escribe a: {CONTACT_EMAIL}", fg="yellow")
             cfg.pop("email", None)
             save_config(cfg)
+            _tras_error(ctx, "¿Intentar con otro correo?")
+        elif e.status_code == 404:
+            click.secho(f"  ✗ El run '{run_id}' no existe en la base de datos local.", fg="red")
+            click.secho(f"  Prueba sincronizarlo primero, ej: ghub search {run_id}", fg="yellow")
+            _tras_error(ctx, "¿Intentar con otro ID?")
         else:
             print_api_error(e)
+            _tras_error(ctx)
         return
 
     # --- Caso especial: archivo ya listo y autorizado (request_id=None) ---
@@ -144,6 +147,7 @@ def _flujo_descarga(ctx):
         click.secho("  ✓ Código verificado. Iniciando preparación...", fg="green")
     except APIError as e:
         print_api_error(e)
+        _tras_error(ctx)
         return
 
     # --- Paso 5: esperar Celery ---
@@ -153,9 +157,12 @@ def _flujo_descarga(ctx):
         if final is None:
             click.secho("\n  La descarga sigue preparándose. Retómala con:", fg="yellow")
             click.secho(f"    ghub task {task_id} --poll", fg="yellow", bold=True)
+            if click.confirm("\n  ¿Volver al menú principal?", default=True):
+                menu_principal(ctx)
             return
         if final.get("status") in FAILURE_STATES:
             click.secho("  ✗ La preparación del archivo falló.", fg="red")
+            _tras_error(ctx)
             return
     else:
         click.secho("  ✓ El archivo ya estaba listo.", fg="green")
@@ -177,6 +184,7 @@ def _descargar_archivo(ctx, client, run_id: str, email: str):
         click.secho(f"\n  ✓ Archivo guardado en: {saved_path}", fg="green", bold=True)
     except APIError as e:
         print_api_error(e)
+        _tras_error(ctx)
         return
 
     if click.confirm("\n  ¿Volver al menú principal?", default=True):

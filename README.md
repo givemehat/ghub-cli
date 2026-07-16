@@ -16,7 +16,9 @@ genomic-hub-cli/
     ├── cli.py             # comandos de Click (sync, download, check, etc.)
     ├── client.py          # wrapper HTTP sobre la API (rutas + manejo de errores)
     ├── config.py          # persistencia de --base-url en ~/.config/ghub-cli/
-    └── utils.py           # polling de tareas Celery + spinner de progreso
+    └── utils/
+        ├── email.py       # resolución/validación/guardado del correo de descarga
+        └── tasks.py       # polling de tareas Celery + spinner de progreso
 ```
 
 ## Instalación
@@ -43,6 +45,20 @@ O pásalo al vuelo en cualquier comando con `--base-url`:
 ```bash
 ghub --base-url http://tu-servidor:8000 check SRR1972976
 ```
+
+### Correo institucional
+
+Para no tener que pasar `--email` en cada descarga (o pasar por el menú
+interactivo la primera vez), puedes guardarlo y validarlo directamente:
+
+```bash
+ghub config set-email tu@correo.com    # lo valida contra la API y lo guarda
+ghub config unset-email                # lo olvida
+ghub config show                       # ver qué correo/URL están guardados
+```
+
+Una vez guardado, `ghub download <run_id>` lo usa automáticamente sin
+necesidad de la bandera `--email` (ver sección "Descarga" más abajo).
 
 ## Comandos
 
@@ -78,15 +94,33 @@ ghub task <task_id> --poll         # espera hasta que termine
 ### Descarga (flujo OTP completo)
 
 ```bash
+# usa el correo guardado; si no hay ninguno, lo pide y lo guarda
+ghub download SRR1972976
+
+# usa este correo solo para esta corrida, sin sobrescribir el guardado
 ghub download SRR1972976 --email tu@correo.com
+
+# ruta de destino personalizada
+ghub download SRR1972976 -o ./data/SRR1972976.tar.gz
 ```
 
+`--email` es opcional:
+
+- Si lo pasas, se usa ese correo **solo para esta ejecución** — nunca
+  sobrescribe el que ya tengas guardado.
+- Si lo omites, se usa el correo guardado en
+  `~/.config/ghub-cli/config.json`.
+- Si no hay ninguno guardado, el CLI te lo pide, lo valida contra la API
+  y lo guarda para futuras sesiones (mismo comportamiento que el menú
+  interactivo).
+
 Esto hace todo el flujo en un solo comando:
-1. Solicita la descarga (`/download/request`)
-2. Te pide el código OTP que llega al correo
-3. Verifica el OTP (`/download/verify`)
-4. Espera a que el archivo esté listo
-5. Descarga el archivo al directorio actual (o a `-o/--output` si lo das)
+1. Resuelve el correo a usar (guardado / `--email` / lo pide y lo guarda)
+2. Solicita la descarga (`/download/request`)
+3. Te pide el código OTP que llega al correo
+4. Verifica el OTP (`/download/verify`)
+5. Espera a que el archivo esté listo
+6. Descarga el archivo al directorio actual (o a `-o/--output` si lo das)
 
 ### Administración
 
@@ -102,3 +136,6 @@ ghub register-email --admin-id 1 --name "Juan Pérez" --email juan@ejemplo.com
   seguridad real.
 - `download` requiere pasar por el flujo OTP completo; no hay atajo para
   descargar sin haber verificado el código.
+- El correo se guarda en texto plano en `~/.config/ghub-cli/config.json`
+  tras ser validado contra la API. Pasar `--email` en un comando puntual
+  nunca sobrescribe ese valor guardado.

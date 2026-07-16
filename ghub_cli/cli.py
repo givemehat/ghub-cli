@@ -1,3 +1,4 @@
+import sys
 import click
 
 from ghub_cli.core.config import load_config, save_config, DEFAULT_BASE_URL
@@ -10,6 +11,7 @@ from ghub_cli.commands.interactive import menu_principal
 from ghub_cli.commands.search import search, check, explore
 from ghub_cli.commands.export import export_metadata
 from ghub_cli.commands.download import download, task_status
+from ghub_cli.utils.email import validar_y_guardar_email
 
 
 @click.group(invoke_without_command=True)
@@ -45,6 +47,31 @@ def config_set_url(url):
     cfg["base_url"] = url.rstrip("/")
     save_config(cfg)
     click.echo(f"URL base guardada: {cfg['base_url']}")
+
+
+@config.command("set-email")
+@click.argument("email")
+@click.pass_context
+def config_set_email(ctx, email):
+    """Valida y guarda tu correo institucional para descargas."""
+    client = ctx.obj["client"]
+    cfg = load_config()
+    if validar_y_guardar_email(client, cfg, email):
+        click.secho(f"✓ Correo guardado: {email}", fg="green", bold=True)
+    else:
+        sys.exit(1)
+
+
+@config.command("unset-email")
+def config_unset_email():
+    """Olvida el correo guardado."""
+    cfg = load_config()
+    if cfg.pop("email", None) is not None:
+        save_config(cfg)
+        click.echo("Correo olvidado.")
+    else:
+        click.echo("No había ningún correo guardado.")
+
 
 @config.command("show")
 def config_show():
