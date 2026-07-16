@@ -9,14 +9,12 @@ from ghub_cli.commands.search import search
 
 CONTACT_EMAIL = "leticiavega@icar.unam.mx"
 
-
-def _guardar_email(cfg: dict, email: str):
+def _save_email(cfg: dict, email: str):
     cfg["email"] = email
     save_config(cfg)
     click.secho("  ✓ Correo guardado para futuras sesiones.", fg="green")
 
-
-def menu_principal(ctx):
+def main_menu(ctx):
     """Menú interactivo de bienvenida."""
     click.clear()
     click.secho("╔══════════════════════════════════════════════════╗", fg="cyan", bold=True)
@@ -27,64 +25,67 @@ def menu_principal(ctx):
     click.echo("  [2]  Descarga    — descarga secuencias SRR")
     click.echo("  [0]  Salir\n")
 
-    opcion = click.prompt("Selecciona una opción", type=click.Choice(["0", "1", "2"]), show_choices=False)
+    option = click.prompt("Selecciona una opción", type=click.Choice(["0", "1", "2"]), show_choices=False)
 
-    if opcion == "0":
+    if option == "0":
         click.echo("¡Hasta luego!")
         sys.exit(0)
-    elif opcion == "1":
-        _menu_consulta(ctx)
-    elif opcion == "2":
-        _flujo_descarga(ctx)
+    elif option == "1":
+        _search_menu(ctx)
+    elif option == "2":
+        _download_flow(ctx)
 
-
-def _menu_consulta(ctx):
+def _search_menu(ctx):
     click.echo("\n── Consulta ─────────────────────────────────────────")
     click.echo("\n  [1]  Buscar en NCBI por texto libre")
-    click.echo("  [2]  Ver datos locales de un ID (con auto-sincronización)")
-    click.echo("  [3]  Verificar si un ID existe localmente")
+    click.echo("  [2]  Ver datos de un ID en Genomic-Hub")
+    click.echo("  [3]  Verificar si un ID existe en Genomic-Hub")
     click.echo("  [0]  Volver al menú principal\n")
 
-    opcion = click.prompt("Selecciona una opción", type=click.Choice(["0", "1", "2", "3"]), show_choices=False)
+    option = click.prompt("Selecciona una opción", type=click.Choice(["0", "1", "2", "3"]), show_choices=False)
     client = ctx.obj["client"]
 
-    if opcion == "0":
-        menu_principal(ctx)
-    elif opcion == "1":
+    if option == "0":
+        main_menu(ctx)
+        return
+    elif option == "1":
+        from ghub_cli.commands.search import explore
         query = click.prompt("Término de búsqueda")
         try:
             result = client.explore(query, page=1, page_size=20)
-            click.echo(f"\n  Total: {result['total']} resultados\n")
-            for r in result["results"]:
+            click.echo(f"\n  Total: {result['total_items']} resultados\n")
+            for r in result["data"]:
                 click.echo(f"  {r.get('bioproject_accession', '-'):<15} {r.get('organism') or '-':<25} {r.get('title') or ''}")
         except APIError as e:
             print_api_error(e)
-    elif opcion == "2":
+    elif option == "2":
         target_id = click.prompt("ID a consultar")
         click.echo()
-        ctx.invoke(search, raw_ids=(target_id,), page=1, page_size=20)
-    elif opcion == "3":
+        try:
+            ctx.invoke(search, raw_ids=(target_id,), page=1, page_size=20)
+        except SystemExit:
+            pass
+    elif option == "3":
+        from ghub_cli.commands.search import check
         target_id = click.prompt("ID a verificar")
         try:
             result = client.check_bulk([target_id])
             exists = target_id in result.get("existing_ids", [])
             color = "green" if exists else "yellow"
-            click.secho(f"\n  {target_id}: {'✓ existe' if exists else '✗ no existe'}", fg=color)
+            message = "✓ En Genomic-Hub" if exists else "✗ No encontrado en Genomic-Hub"
+            click.secho(f"\n  {target_id}: {message}", fg=color)
         except APIError as e:
             print_api_error(e)
 
     click.echo()
-    if click.confirm("¿Volver al menú principal?", default=True):
-        menu_principal(ctx)
+    _search_menu(ctx)
 
-
-def _flujo_descarga(ctx):
+def _download_flow(ctx):
     client = ctx.obj["client"]
     cfg = load_config()
 
     click.echo("\n── Descarga de secuencias ───────────────────────────\n")
 
-    # --- Paso 1: credenciales ---
     email = cfg.get("email")
     if email:
         click.echo(f"  Email registrado: {click.style(email, fg='green')}")
@@ -96,25 +97,21 @@ def _flujo_descarga(ctx):
         click.echo("  Verificando acceso...")
         try:
             client.request_download("__check__", email)
-            _guardar_email(cfg, email)
+            _save_email(cfg, email)
         except APIError as e:
             if e.status_code == 400 and "denegado" in e.detail.lower():
                 click.secho("\n  ✗ Este correo no está registrado.", fg="red", bold=True)
                 click.secho(f"  Para solicitar acceso escribe a: {CONTACT_EMAIL}", fg="yellow")
                 if click.confirm("\n  ¿Intentar con otro correo?", default=True):
-                    _flujo_descarga(ctx)
+                    _download_flow(ctx)
                 return
             elif e.status_code == 404 or "no existe" in e.detail.lower():
-                # __check__ no existe en BD pero el email sí pasó — guardamos
-                _guardar_email(cfg, email)
+                _save_email(cfg, email)
             else:
                 print_api_error(e)
                 return
 
-    # --- Paso 2: pedir el SRR ---
     run_id = click.prompt("\n  Ingresa el ID de la secuencia a descargar (ej. SRR1972976)")
-
-    # --- Paso 3: solicitar OTP ---
     click.echo("\n  Solicitando código de verificación...")
     try:
         req = client.request_download(run_id, email)
@@ -122,21 +119,17 @@ def _flujo_descarga(ctx):
     except APIError as e:
         if e.status_code == 400 and "denegado" in e.detail.lower():
             click.secho("  ✗ Tu correo ya no tiene acceso autorizado.", fg="red")
-            click.secho(f"  Contacta a: {CONTACT_EMAIL}", fg="yellow")
             cfg.pop("email", None)
             save_config(cfg)
         else:
             print_api_error(e)
         return
 
-    # --- Caso especial: archivo ya listo y autorizado (request_id=None) ---
     if request_id is None:
         click.secho("  ✓ El archivo ya está disponible para tu correo.", fg="green")
-        _descargar_archivo(ctx, client, run_id, email)
+        _execute_download(ctx, client, run_id, email)
         return
 
-    # --- Paso 4: OTP normal ---
-    click.secho("  ✓ Código enviado a tu correo.", fg="green")
     otp_code = click.prompt("\n  Código de verificación recibido")
     click.echo("\n  Verificando código...")
     try:
@@ -146,13 +139,11 @@ def _flujo_descarga(ctx):
         print_api_error(e)
         return
 
-    # --- Paso 5: esperar Celery ---
     task_id = verify_result.get("task_id")
     if task_id and task_id not in ("ALREADY_CONFIRMED", "LINKED_TO_EXISTING_DOWNLOAD"):
         final = poll_task(client, task_id, interval=3.0, label="Preparando archivo", show_result=False)
         if final is None:
             click.secho("\n  La descarga sigue preparándose. Retómala con:", fg="yellow")
-            click.secho(f"    ghub task {task_id} --poll", fg="yellow", bold=True)
             return
         if final.get("status") in FAILURE_STATES:
             click.secho("  ✗ La preparación del archivo falló.", fg="red")
@@ -160,14 +151,12 @@ def _flujo_descarga(ctx):
     else:
         click.secho("  ✓ El archivo ya estaba listo.", fg="green")
 
-    # --- Paso 6: descarga ---
-    _descargar_archivo(ctx, client, run_id, email)
+    _execute_download(ctx, client, run_id, email)
 
 
-def _descargar_archivo(ctx, client, run_id: str, email: str):
-    """Pide ruta de destino y descarga el archivo."""
+def _execute_download(ctx, client, run_id: str, email: str):
     output = click.prompt(
-        "\n  Ruta de destino (Enter para directorio actual)",
+        "\n  Ruta de destino (Enter para usar el directorio actual)",
         default="", show_default=False
     ).strip() or None
 
@@ -180,4 +169,4 @@ def _descargar_archivo(ctx, client, run_id: str, email: str):
         return
 
     if click.confirm("\n  ¿Volver al menú principal?", default=True):
-        menu_principal(ctx)
+        main_menu(ctx)

@@ -42,7 +42,6 @@ def search(ctx, raw_ids, page, page_size, as_json):
             if not as_json:
                 click.secho(f"Sincronizando {len(missing)} ID(s) faltantes en NCBI...", fg="yellow")
             
-            # Usando el nuevo método inteligente para sincronizar 1 o varios
             sync_res = client.sync(missing)
             
             if "task_id" in sync_res:
@@ -119,12 +118,12 @@ def check(ctx, raw_ids):
         result = client.check_bulk(target_ids)
         click.echo()
         if result.get("existing_ids"):
-            click.secho("✓ Existen localmente:", fg="green", bold=True)
+            click.secho("✓ Registered in Genomic-Hub:", fg="green", bold=True)
             for eid in result["existing_ids"]:
                 click.secho(f"  - {eid}", fg="green")
                 
         if result.get("missing_ids"):
-            click.secho("\n✗ Faltan localmente (requieren sync):", fg="yellow", bold=True)
+            click.secho("\n✗ Not found in Genomic-Hub (sync required):", fg="yellow", bold=True)
             for mid in result["missing_ids"]:
                 click.secho(f"  - {mid}", fg="yellow")
     except APIError as e:
@@ -142,8 +141,8 @@ def explore(ctx, query, page, page_size):
     client = get_client(ctx)
     try:
         result = client.explore(query, page, page_size)
-        click.echo(f"Total: {result['total']} resultados (página {result['page']})\n")
-        for r in result["results"]:
+        click.echo(f"Total: {result['total_items']} resultados (página {result['page']})\n")
+        for r in result["data"]:
             click.echo(f"  {r['bioproject_accession']:<15} {r.get('organism') or '-':<25} {r.get('title') or ''}")
     except APIError as e:
         print_api_error(e)

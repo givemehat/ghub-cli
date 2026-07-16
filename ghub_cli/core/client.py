@@ -81,7 +81,7 @@ class GenomicHubClient:
             return self._post("/sync-bulk", {"ids": ids})
 
     def explore(self, query: str, page: int = 1, page_size: int = 20) -> dict:
-        return self._get("/explore", {"q": query, "page": page, "page_size": page_size})
+        return self._get("/explore", {"query": query, "page": page, "page_size": page_size})
 
     def task_status(self, task_id: str) -> dict:
         return self._get(f"/task/{task_id}")
