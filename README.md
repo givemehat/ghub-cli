@@ -117,10 +117,21 @@ ghub download SRR1972976 -o ./data/SRR1972976.tar.gz
 Esto hace todo el flujo en un solo comando:
 1. Resuelve el correo a usar (guardado / `--email` / lo pide y lo guarda)
 2. Solicita la descarga (`/download/request`)
-3. Te pide el código OTP que llega al correo
+3. Si ese `run_id` nunca se había verificado con ese correo, te pide el
+   código OTP que llega por email (esta parte no se puede automatizar:
+   el código solo lo tienes tú, en tu correo). Si ya lo habías verificado
+   antes para ese mismo `run_id` + correo, se lo salta.
 4. Verifica el OTP (`/download/verify`)
-5. Espera a que el archivo esté listo
+5. Espera a que el archivo esté listo (usa `--no-poll` para solo encolar
+   la preparación y salir, sin bloquear la terminal — luego retómalo con
+   `ghub task <task_id> --poll`)
 6. Descarga el archivo al directorio actual (o a `-o/--output` si lo das)
+
+> **Nota:** como el código OTP llega por correo, el comando sí se queda
+> esperando tu input (`click.prompt`) cuando el run es nuevo — no es
+> apto para correrlo desde un cron/script sin nadie enfrente. Si
+> necesitas eso, lo resolvemos separando `request`/`verify` en dos
+> subcomandos independientes.
 
 ### Administración
 
