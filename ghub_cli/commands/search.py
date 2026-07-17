@@ -67,33 +67,33 @@ def search(ctx, raw_ids, page, page_size, as_json):
         runs = [i for i in target_ids if detect_id_type(i) in ["run"]]
 
         final_data = []
-        total_items = 0
+
+        # Orden de impresión: de menor a mayor cantidad de información
+        # (runs y samples son puntuales; experiments y bioprojects arrastran
+        # tablas anidadas, así que se imprimen al final para mayor claridad).
+        if runs:
+            res = client.get_runs_batch(runs)
+            final_data.extend(res.get("data", []))
+
+        if samples:
+            res = client.get_samples_batch(samples)
+            final_data.extend(res.get("data", []))
+
+        if experiments:
+            res = client.get_experiments_batch(experiments, page, page_size)
+            final_data.extend(res.get("data", []))
 
         if projects:
             res = client.get_bioprojects_batch(projects, page, page_size)
             final_data.extend(res.get("data", []))
-            total_items = max(total_items, res.get("total_items", 0))
-            
-        if samples:
-            res = client.get_samples_batch(samples)
-            final_data.extend(res.get("data", []))
-            total_items = max(total_items, len(res.get("data", [])))
-            
-        if experiments:
-            res = client.get_experiments_batch(experiments, page, page_size)
-            final_data.extend(res.get("data", []))
-            total_items = max(total_items, res.get("total_items", 0))
-            
-        if runs:
-            res = client.get_runs_batch(runs)
-            final_data.extend(res.get("data", []))
-            total_items = max(total_items, len(res.get("data", [])))
 
         if as_json:
             click.echo(pretty_json(final_data))
         else:
-            print_formatted_search_results(final_data, page, page_size, total_items, len(target_ids))
-        
+            print_formatted_search_results(final_data)
+
+        return final_data
+
     except APIError as e:
         print_api_error(e)
         sys.exit(1)

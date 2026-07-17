@@ -1,4 +1,5 @@
 import sys
+import math
 import click
 
 from ghub_cli.core.config import load_config, save_config
@@ -8,6 +9,104 @@ from ghub_cli.utils.tasks import poll_task, FAILURE_STATES
 from ghub_cli.commands.search import search
 
 CONTACT_EMAIL = "leticiavega@icar.unam.mx"
+
+def _prompt_page_number(total_pages: int) -> int:
+    """Pide un número de página, reintentando con un mensaje propio si está fuera de rango."""
+    while True:
+        raw = click.prompt("  Número de página", type=int)
+        if 1 <= raw <= total_pages:
+            return raw
+        click.secho(
+            f"  Error: no hay {raw} páginas para este proyecto, "
+            f"coloca un número dentro de este rango (1-{total_pages}).",
+            fg="red",
+        )
+
+
+def _prompt_pagination_action(page: int, total_pages: int) -> str:
+    """Muestra el submenú de navegación y devuelve la acción elegida."""
+    click.echo(f"\n  ── Página {page} de {total_pages} ──")
+    labels, choices = [], []
+    if page < total_pages:
+        labels.append("[n] Siguiente página")
+        choices.append("n")
+    if page > 1:
+        labels.append("[p] Página anterior")
+        choices.append("p")
+    labels.append("[g] Ir a página")
+    choices.append("g")
+    labels.append("[0] Volver al menú de consulta")
+    choices.append("0")
+    click.echo("  " + "   ".join(labels))
+
+    action = click.prompt("  Selecciona una opción", type=click.Choice(choices), show_choices=False)
+    if action == "g":
+        return f"g:{_prompt_page_number(total_pages)}"
+    return action
+
+def _explore_menu(client, query: str, page_size: int = 20):
+    """Busca por texto libre en NCBI, con navegación de páginas."""
+    page = 1
+    while True:
+        try:
+            result = client.explore(query, page=page, page_size=page_size)
+        except APIError as e:
+            print_api_error(e)
+            return
+
+        total_items = result.get("total_items", 0)
+        total_pages = math.ceil(total_items / page_size) if page_size else 1
+
+        click.echo(f"\n  Total: {total_items} resultados (página {page} de {total_pages})\n")
+        for r in result["data"]:
+            click.echo(f"  {r.get('bioproject_accession', '-'):<15} {r.get('organism') or '-':<25} {r.get('title') or ''}")
+
+        if total_pages <= 1:
+            return
+
+        action = _prompt_pagination_action(page, total_pages)
+        if action == "0":
+            return
+        elif action == "n":
+            page += 1
+        elif action == "p":
+            page -= 1
+        elif action.startswith("g:"):
+            page = int(action.split(":", 1)[1])
+
+
+def _search_id_menu(ctx, target_id: str, page_size: int = 20):
+    """Consulta un ID en Genomic-Hub, con navegación de páginas."""
+    page = 1
+    while True:
+        click.echo()
+        try:
+            final_data = ctx.invoke(search, raw_ids=(target_id,), page=page, page_size=page_size)
+        except SystemExit:
+            return
+
+        pagination = next(
+            (item.get("pagination") for item in (final_data or []) if item.get("pagination")),
+            None,
+        )
+        if not pagination:
+            return
+
+        total_items = pagination.get("total_items", 0)
+        total_pages = math.ceil(total_items / page_size) if page_size else 1
+        if total_pages <= 1:
+            return
+
+        action = _prompt_pagination_action(page, total_pages)
+        if action == "0":
+            return
+        elif action == "n":
+            page += 1
+        elif action == "p":
+            page -= 1
+        elif action.startswith("g:"):
+            page = int(action.split(":", 1)[1])
+
 
 def _save_email(cfg: dict, email: str):
     cfg["email"] = email
@@ -49,22 +148,11 @@ def _search_menu(ctx):
         main_menu(ctx)
         return
     elif option == "1":
-        from ghub_cli.commands.search import explore
         query = click.prompt("Término de búsqueda")
-        try:
-            result = client.explore(query, page=1, page_size=20)
-            click.echo(f"\n  Total: {result['total_items']} resultados\n")
-            for r in result["data"]:
-                click.echo(f"  {r.get('bioproject_accession', '-'):<15} {r.get('organism') or '-':<25} {r.get('title') or ''}")
-        except APIError as e:
-            print_api_error(e)
+        _explore_menu(client, query)
     elif option == "2":
         target_id = click.prompt("ID a consultar")
-        click.echo()
-        try:
-            ctx.invoke(search, raw_ids=(target_id,), page=1, page_size=20)
-        except SystemExit:
-            pass
+        _search_id_menu(ctx, target_id)
     elif option == "3":
         from ghub_cli.commands.search import check
         target_id = click.prompt("ID a verificar")
