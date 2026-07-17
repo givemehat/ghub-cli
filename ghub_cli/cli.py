@@ -5,7 +5,7 @@ from ghub_cli.core.config import load_config, save_config, DEFAULT_BASE_URL
 from ghub_cli.core.client import GenomicHubClient
 
 # La cuarentena (Menús Legacy)
-from ghub_cli.commands.interactive import menu_principal
+from ghub_cli.commands.interactive import main_menu
 
 # Comandos puros
 from ghub_cli.commands.search import search, check, explore
@@ -28,7 +28,7 @@ def cli(ctx, base_url, timeout):
 
     # Si se ejecuta 'ghub' sin argumentos, activamos el menú legacy
     if ctx.invoked_subcommand is None:
-        menu_principal(ctx)
+        main_menu(ctx)
 
 
 # =========================================

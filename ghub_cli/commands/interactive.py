@@ -1,4 +1,5 @@
 import sys
+import math
 import click
 
 from ghub_cli.core.config import load_config, save_config
@@ -9,7 +10,7 @@ from ghub_cli.utils.email import CONTACT_EMAIL, guardar_email, validar_y_guardar
 from ghub_cli.commands.search import search
 
 
-def menu_principal(ctx):
+def main_menu(ctx):
     """Menú interactivo de bienvenida."""
     click.clear()
     click.secho("╔══════════════════════════════════════════════════╗", fg="cyan", bold=True)
@@ -31,6 +32,111 @@ def menu_principal(ctx):
         _flujo_descarga(ctx)
 
 
+# =========================================
+# Paginación (compartida entre búsquedas)
+# =========================================
+def _prompt_page_number(total_pages: int) -> int:
+    """Pide un número de página, reintentando con un mensaje propio si está fuera de rango."""
+    while True:
+        raw = click.prompt("  Número de página", type=int)
+        if 1 <= raw <= total_pages:
+            return raw
+        click.secho(
+            f"  Error: no hay {raw} páginas para este proyecto, "
+            f"coloca un número dentro de este rango (1-{total_pages}).",
+            fg="red",
+        )
+
+
+def _prompt_pagination_action(page: int, total_pages: int) -> str:
+    """Muestra el submenú de navegación y devuelve la acción elegida."""
+    click.echo(f"\n  ── Página {page} de {total_pages} ──")
+    labels, choices = [], []
+    if page < total_pages:
+        labels.append("[n] Siguiente página")
+        choices.append("n")
+    if page > 1:
+        labels.append("[p] Página anterior")
+        choices.append("p")
+    labels.append("[g] Ir a página")
+    choices.append("g")
+    labels.append("[0] Volver al menú de consulta")
+    choices.append("0")
+    click.echo("  " + "   ".join(labels))
+
+    action = click.prompt("  Selecciona una opción", type=click.Choice(choices), show_choices=False)
+    if action == "g":
+        return f"g:{_prompt_page_number(total_pages)}"
+    return action
+
+
+def _explore_menu(client, query: str, page_size: int = 20):
+    """Busca por texto libre en NCBI, con navegación de páginas."""
+    page = 1
+    while True:
+        try:
+            result = client.explore(query, page=page, page_size=page_size)
+        except APIError as e:
+            print_api_error(e)
+            return
+
+        total_items = result.get("total_items", result.get("total", 0))
+        total_pages = math.ceil(total_items / page_size) if page_size else 1
+
+        click.echo(f"\n  Total: {total_items} resultados (página {page} de {total_pages})\n")
+        for r in result.get("data", result.get("results", [])):
+            click.echo(f"  {r.get('bioproject_accession', '-'):<15} {r.get('organism') or '-':<25} {r.get('title') or ''}")
+
+        if total_pages <= 1:
+            return
+
+        action = _prompt_pagination_action(page, total_pages)
+        if action == "0":
+            return
+        elif action == "n":
+            page += 1
+        elif action == "p":
+            page -= 1
+        elif action.startswith("g:"):
+            page = int(action.split(":", 1)[1])
+
+
+def _search_id_menu(ctx, target_id: str, page_size: int = 20):
+    """Consulta un ID en Genomic-Hub, con navegación de páginas."""
+    page = 1
+    while True:
+        click.echo()
+        try:
+            final_data = ctx.invoke(search, raw_ids=(target_id,), page=page, page_size=page_size)
+        except SystemExit:
+            return
+
+        pagination = next(
+            (item.get("pagination") for item in (final_data or []) if item.get("pagination")),
+            None,
+        )
+        if not pagination:
+            return
+
+        total_items = pagination.get("total_items", 0)
+        total_pages = math.ceil(total_items / page_size) if page_size else 1
+        if total_pages <= 1:
+            return
+
+        action = _prompt_pagination_action(page, total_pages)
+        if action == "0":
+            return
+        elif action == "n":
+            page += 1
+        elif action == "p":
+            page -= 1
+        elif action.startswith("g:"):
+            page = int(action.split(":", 1)[1])
+
+
+# =========================================
+# Menú de consulta
+# =========================================
 def _menu_consulta(ctx):
     click.echo("\n── Consulta ─────────────────────────────────────────")
     click.echo("\n  [1]  Buscar en NCBI por texto libre")
@@ -42,20 +148,14 @@ def _menu_consulta(ctx):
     client = ctx.obj["client"]
 
     if opcion == "0":
-        menu_principal(ctx)
+        main_menu(ctx)
+        return
     elif opcion == "1":
         query = click.prompt("Término de búsqueda")
-        try:
-            result = client.explore(query, page=1, page_size=20)
-            click.echo(f"\n  Total: {result['total']} resultados\n")
-            for r in result["results"]:
-                click.echo(f"  {r.get('bioproject_accession', '-'):<15} {r.get('organism') or '-':<25} {r.get('title') or ''}")
-        except APIError as e:
-            print_api_error(e)
+        _explore_menu(client, query)
     elif opcion == "2":
         target_id = click.prompt("ID a consultar")
-        click.echo()
-        ctx.invoke(search, raw_ids=(target_id,), page=1, page_size=20)
+        _search_id_menu(ctx, target_id)
     elif opcion == "3":
         target_id = click.prompt("ID a verificar")
         try:
@@ -67,8 +167,7 @@ def _menu_consulta(ctx):
             print_api_error(e)
 
     click.echo()
-    if click.confirm("¿Volver al menú principal?", default=True):
-        menu_principal(ctx)
+    _menu_consulta(ctx)
 
 
 def _tras_error(ctx, mensaje_reintento: str = "¿Quieres intentarlo de nuevo?"):
@@ -83,7 +182,7 @@ def _tras_error(ctx, mensaje_reintento: str = "¿Quieres intentarlo de nuevo?"):
         _flujo_descarga(ctx)
         return
     if click.confirm("¿Volver al menú principal?", default=True):
-        menu_principal(ctx)
+        main_menu(ctx)
         return
     click.echo("¡Hasta luego!")
     sys.exit(0)
@@ -158,7 +257,7 @@ def _flujo_descarga(ctx):
             click.secho("\n  La descarga sigue preparándose. Retómala con:", fg="yellow")
             click.secho(f"    ghub task {task_id} --poll", fg="yellow", bold=True)
             if click.confirm("\n  ¿Volver al menú principal?", default=True):
-                menu_principal(ctx)
+                main_menu(ctx)
             return
         if final.get("status") in FAILURE_STATES:
             click.secho("  ✗ La preparación del archivo falló.", fg="red")
@@ -188,4 +287,4 @@ def _descargar_archivo(ctx, client, run_id: str, email: str):
         return
 
     if click.confirm("\n  ¿Volver al menú principal?", default=True):
-        menu_principal(ctx)
+        main_menu(ctx)

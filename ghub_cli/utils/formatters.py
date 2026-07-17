@@ -11,14 +11,25 @@ def print_api_error(e: APIError) -> None:
     if e.code:
         click.secho(f"  code: {e.code}", fg="red", dim=True)
 
-def print_formatted_search_results(data_list, page, page_size, total_items, ids_procesados):
+def _print_item_pagination(pagination):
+    """Imprime el pie de paginación propio de un ítem (bioproject o experimento)."""
+    if not pagination:
+        return
+    page = pagination.get("page", 1)
+    page_size = pagination.get("page_size", 20)
+    total_items = pagination.get("total_items", 0)
+    paginas_totales = math.ceil(total_items / page_size) if page_size > 0 else 1
+    click.echo("─" * 80)
+    click.secho(f"Página {page} de {paginas_totales} ({page_size} items por página)", dim=True)
+
+
+def print_formatted_search_results(data_list):
     if not data_list:
         click.secho("No se encontraron datos.", fg="yellow")
         return
 
     click.echo()
-    tipo_vista = "genérico"
-    
+
     for idx, item in enumerate(data_list):
         if idx > 0:
             click.echo("\n" + "═" * 80 + "\n")
@@ -26,29 +37,18 @@ def print_formatted_search_results(data_list, page, page_size, total_items, ids_
             click.echo("═" * 80)
 
         if "bioproject_accession" in item:
-            tipo_vista = "bioproject"
             _print_bioproject(item)
         elif "sample_accession" in item:
-            tipo_vista = "sample"
             _print_sample(item)
         elif "run_accession" in item:
-            tipo_vista = "run"
             _print_run(item)
         elif "bioproject" in item and "experiments" in item:
-            tipo_vista = "experiment"
             _print_experiment(item)
         else:
             click.secho("Ítem genérico", bold=True)
             click.echo(pretty_json(item))
 
-    # Imprimir siempre la línea de cierre al final del bucle para todas las vistas
     click.echo("═" * 80)
-
-    # La metadata de paginación se queda exclusiva de BioProject y Experiment
-    if tipo_vista not in ["sample", "run"]:
-        paginas_totales = math.ceil(total_items / page_size) if page_size > 0 else 1
-        click.secho(f"Página {page} de {paginas_totales} ({page_size} items por página)", dim=True)
-        click.echo("═" * 80)
 
 
 # =========================================
@@ -191,6 +191,7 @@ def _print_bioproject(item):
     proj = item.get("bioproject") if "bioproject" in item else item
     _render_bioproject_block(proj, include_pubs=True)
     _render_experiments_table(item.get("experiments", []))
+    _print_item_pagination(item.get("pagination"))
 
 
 def _print_experiment(item):
@@ -224,6 +225,8 @@ def _print_experiment(item):
                 bases = run.get("total_bases") or 0
                 pub = str(run.get("published_date") or "-")[:10]
                 click.echo(f"{r_acc:<15} {spots:<15,} {bases:<15,} {pub}")
+
+        _print_item_pagination(exp.get("pagination"))
 
 
 def _print_sample(item):

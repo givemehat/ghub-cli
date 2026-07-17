@@ -99,6 +99,11 @@ def _descargar(client, run_id: str, email: str, output: str):
         click.secho(f"✓ Archivo guardado en: {saved_path}", fg="green", bold=True)
     except APIError as e:
         print_api_error(e)
+        if e.status_code == 404 or (e.status_code == 400 and "autorizaci" in e.detail.lower()):
+            click.secho(
+                "\n  Si ya hiciste el flujo de verificación y la descarga falló o se interrumpió,\n"
+                "  intenta ejecutar este comando nuevamente.", fg="yellow"
+            )
         sys.exit(1)
 
 
