@@ -147,3 +147,6 @@ class GenomicHubClient:
                     f.write(chunk)
 
         return str(dest)
+    
+    def file_status(self, run_id: str) -> dict:
+        return self._get(f"/download/file-status/{run_id}")

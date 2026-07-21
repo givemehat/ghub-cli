@@ -1,5 +1,6 @@
 import sys
 import math
+import time
 import click
 
 from ghub_cli.core.config import load_config, save_config
@@ -188,6 +189,29 @@ def _tras_error(ctx, mensaje_reintento: str = "¿Quieres intentarlo de nuevo?"):
     sys.exit(0)
 
 
+def _poll_file_status(client, run_id: str, interval: float = 3.0, timeout: float = 300.0) -> str:
+    """
+    Consulta /download/file-status/{run_id} repetidamente hasta que el archivo
+    quede en un estado terminal (COMPLETED/FAILED) o se agote el timeout.
+    """
+    elapsed = 0.0
+    while elapsed < timeout:
+        try:
+            result = client.file_status(run_id)
+        except APIError as e:
+            print_api_error(e)
+            return "FAILED"
+
+        status = result.get("status")
+        if status in ("COMPLETED", "FAILED"):
+            return status
+
+        time.sleep(interval)
+        elapsed += interval
+
+    return "TIMEOUT"
+
+
 def _flujo_descarga(ctx):
     client = ctx.obj["client"]
     cfg = load_config()
@@ -249,9 +273,29 @@ def _flujo_descarga(ctx):
         _tras_error(ctx)
         return
 
-    # --- Paso 5: esperar Celery ---
+    # --- Paso 5: esperar a que el archivo esté listo ---
     task_id = verify_result.get("task_id")
-    if task_id and task_id not in ("ALREADY_CONFIRMED", "LINKED_TO_EXISTING_DOWNLOAD"):
+
+    if task_id == "ALREADY_CONFIRMED":
+        click.secho("  ✓ El archivo ya estaba listo.", fg="green")
+
+    elif task_id == "LINKED_TO_EXISTING_DOWNLOAD":
+        click.secho("  ⧗ Otra persona ya está preparando este archivo. Esperando...", fg="yellow")
+        final_status = _poll_file_status(client, run_id)
+        if final_status == "FAILED":
+            click.secho("  ✗ La preparación del archivo falló.", fg="red")
+            _tras_error(ctx)
+            return
+        elif final_status != "COMPLETED":
+            click.secho(
+                "\n  El archivo sigue preparándose. Vuelve a intentar en unos minutos.", fg="yellow"
+            )
+            if click.confirm("\n  ¿Volver al menú principal?", default=True):
+                main_menu(ctx)
+            return
+
+    elif task_id:
+        # task_id real de Celery: esta petición SÍ inició la preparación
         final = poll_task(client, task_id, interval=3.0, label="Preparando archivo", show_result=False)
         if final is None:
             click.secho("\n  La descarga sigue preparándose. Retómala con:", fg="yellow")
@@ -263,8 +307,6 @@ def _flujo_descarga(ctx):
             click.secho("  ✗ La preparación del archivo falló.", fg="red")
             _tras_error(ctx)
             return
-    else:
-        click.secho("  ✓ El archivo ya estaba listo.", fg="green")
 
     # --- Paso 6: descarga ---
     _descargar_archivo(ctx, client, run_id, email)

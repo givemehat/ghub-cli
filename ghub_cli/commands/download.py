@@ -1,4 +1,5 @@
 import sys
+import time
 import click
 
 from ghub_cli.core.client import APIError
@@ -70,7 +71,30 @@ def download(ctx, run_id, email_flag, output, no_poll):
 
     # --- Paso 3: esperar a que el backend prepare el archivo (Celery) ---
     task_id = verify_result.get("task_id")
-    if task_id and task_id not in ("ALREADY_CONFIRMED", "LINKED_TO_EXISTING_DOWNLOAD"):
+
+    if task_id == "ALREADY_CONFIRMED":
+        click.secho("✓ El archivo ya estaba listo.", fg="green")
+
+    elif task_id == "LINKED_TO_EXISTING_DOWNLOAD":
+        if no_poll:
+            click.secho("⧗ Otra persona ya está preparando este archivo.", fg="yellow")
+            click.secho(f"  Vuelve a intentar en unos minutos con: ghub download {run_id} --email {email}", fg="yellow")
+            return
+
+        click.secho("⧗ Otra persona ya está preparando este archivo. Esperando...", fg="yellow")
+        final_status = _poll_file_status(client, run_id)
+        if final_status == "FAILED":
+            click.secho("✗ La preparación del archivo falló.", fg="red")
+            sys.exit(1)
+        elif final_status != "COMPLETED":
+            click.secho(
+                "\n  El archivo sigue preparándose. Vuelve a intentar en unos minutos con:\n"
+                f"  ghub download {run_id} --email {email}", fg="yellow"
+            )
+            sys.exit(1)
+
+    elif task_id:
+        # task_id real de Celery: esta petición SÍ inició la preparación
         if no_poll:
             click.secho(f"Tarea encolada: {task_id}", fg="yellow")
             click.secho(f"  Revisa el estado con: ghub task {task_id} --poll", fg="yellow")
@@ -85,11 +109,28 @@ def download(ctx, run_id, email_flag, output, no_poll):
         if final.get("status") in FAILURE_STATES:
             click.secho("✗ La preparación del archivo falló.", fg="red")
             sys.exit(1)
-    else:
-        click.secho("✓ El archivo ya estaba listo.", fg="green")
 
     # --- Paso 4: descarga ---
     _descargar(client, run_id, email, output)
+
+
+def _poll_file_status(client, run_id: str) -> str:
+    interval = 2.0
+    max_interval = 15.0
+
+    while True:
+        try:
+            result = client.file_status(run_id)
+        except APIError as e:
+            print_api_error(e)
+            return "FAILED"
+
+        status = result.get("status")
+        if status in ("COMPLETED", "FAILED"):
+            return status
+
+        time.sleep(interval)
+        interval = min(interval * 1.5, max_interval)
 
 
 def _descargar(client, run_id: str, email: str, output: str):
