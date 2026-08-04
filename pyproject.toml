@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghub-cli"
+version = "0.1.0"
+description = "CLI para sincronizar, buscar y descargar secuencias desde genomic-hub."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "click>=8.0",
+    "requests>=2.25",
+]
+
+[project.scripts]
+ghub = "ghub_cli.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["ghub_cli*"]
