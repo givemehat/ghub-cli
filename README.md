@@ -62,34 +62,46 @@ necesidad de la bandera `--email` (ver sección "Descarga" más abajo).
 
 ## Comandos
 
-### Sincronización
+### Menú interactivo
 
 ```bash
-# Un solo proyecto
-ghub sync PRJNA12345
-
-# Varios proyectos (máximo 120, validado localmente antes de pegarle al backend)
-ghub sync-bulk PRJNA1 PRJNA2 PRJNA3
-
-# Desde un archivo de texto (un ID por línea)
-ghub sync-bulk --from-file ids.txt
-
-# Combinando archivo + args sueltos
-ghub sync-bulk PRJNA999 --from-file ids.txt
+ghub
 ```
 
-Por defecto, `sync` y `sync-bulk` hacen polling del `task_id` resultante y
-muestran el resultado final. Usa `--no-poll` para solo encolar y salir.
+Si corres `ghub` sin ningún subcomando, se activa un menú guiado en
+terminal para quien prefiere no memorizar flags. Tiene dos secciones:
+
+- **Consulta** — buscar en NCBI por texto libre, ver los datos de un ID
+  en Genomic-Hub o verificar si ya existe localmente. Cuando el resultado
+  tiene más de una página, aparece un submenú para navegar entre ellas
+  (`[n]` siguiente, `[p]` anterior, `[g]` ir a una página específica).
+- **Descarga** — el mismo flujo OTP de `ghub download`, pero guiado paso
+  a paso (pide el correo, el ID y el código de verificación uno por uno).
 
 ### Búsqueda y consulta
 
 ```bash
-ghub check SRR1972976              # ¿existe localmente?
-ghub search SRR1972976             # árbol de datos local
+ghub check SRR1972976                             # ¿existe localmente?
+ghub search SRR1972976                            # árbol de datos local
+ghub search PRJNA12345 --page 2 --page-size 10    # paginación de bioprojects/experiments
+ghub search SRR1972976 PRJNA12345 --json          # salida JSON cruda, sin formato de texto
 ghub explore "human genome" --page 1 --page-size 10   # busca en NCBI
-ghub task <task_id>                # estado de una tarea
-ghub task <task_id> --poll         # espera hasta que termine
+ghub task <task_id>                               # estado de una tarea
+ghub task <task_id> --poll                        # espera hasta que termine
 ```
+
+### Exportación de metadatos
+
+```bash
+ghub export PRJNA12345                           # exporta a PRJNA12345_export.csv
+ghub export SRR1972976 --format json             # exporta a SRR1972976_export.json
+ghub export PRJNA12345 -f csv -o resultados.csv  # ruta de salida personalizada
+```
+
+Exporta el árbol completo de metadatos (bioproject → samples →
+experiments → runs) de un ID a un archivo CSV o JSON. Por defecto usa
+CSV y guarda el archivo como `<ID>_export.<formato>` en el directorio
+actual.
 
 ### Descarga (flujo OTP completo)
 
@@ -141,10 +153,8 @@ ghub register-email --admin-id 1 --name "Juan Pérez" --email juan@ejemplo.com
 
 ## Notas de seguridad
 
-- El límite de 120 IDs en `sync-bulk` se valida **antes** de llamar al
-  backend (evita requests innecesarios), pero el backend debe seguir
-  validándolo también — el CLI es una capa de UX, no el control de
-  seguridad real.
+- El límite de 120 IDs en `sync-bulk` se valida antes de llamar al backend (evita requests innecesarios), pero 
+  el backend debe seguir validándolo también — el CLI es una capa de UX, no el control de seguridad real.
 - `download` requiere pasar por el flujo OTP completo; no hay atajo para
   descargar sin haber verificado el código.
 - El correo se guarda en texto plano en `~/.config/ghub-cli/config.json`
