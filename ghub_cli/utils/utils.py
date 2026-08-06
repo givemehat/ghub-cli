@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Utilidades para esperar tareas asíncronas de Celery con una barra de
 progreso en terminal.

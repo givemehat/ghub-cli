@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import itertools
 import sys
 import time
 import click
-
 from ghub_cli.core.client import GenomicHubClient, APIError
 from ghub_cli.utils.formatters import pretty_json, print_api_error
 
@@ -10,6 +11,7 @@ SUCCESS_STATES = {"success", "completed", "SUCCESS"}
 FAILURE_STATES = {"error", "failed", "FAILURE"}
 TERMINAL_STATES = SUCCESS_STATES | FAILURE_STATES
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 
 def poll_task(
     client: GenomicHubClient,
