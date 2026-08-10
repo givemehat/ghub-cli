@@ -32,7 +32,7 @@ Esto instala el comando `ghub` en tu PATH.
 
 ## Configuración
 
-Por defecto apunta a `http://127.0.0.1:8000`. Para cambiarlo de forma
+Por defecto apunta a `https://lety-b85m-d3h.tail7dea2c.ts.net`. Para cambiarlo de forma
 persistente:
 
 ```bash
