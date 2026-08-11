@@ -13,6 +13,7 @@ ghub_cli/commands/interactive.py
 ghub_cli/commands/search.py
 ghub_cli/core/client.py
 ghub_cli/core/config.py
+ghub_cli/utils/email.py
 ghub_cli/utils/formatters.py
 ghub_cli/utils/identifiers.py
 ghub_cli/utils/tasks.py

@@ -25,7 +25,9 @@ genomic-hub-cli/
     ├── cli.py             # comandos de Click (sync, download, check, etc.)
     ├── client.py          # wrapper HTTP sobre la API (rutas + manejo de errores)
     ├── config.py          # persistencia de --base-url en ~/.config/ghub-cli/
-    └── utils.py           # polling de tareas Celery + spinner de progreso
+    └── utils/
+        ├── email.py       # resolución/validación/guardado del correo de descarga
+        └── tasks.py       # polling de tareas Celery + spinner de progreso
 ```
 
 ## Instalación
@@ -53,49 +55,104 @@ O pásalo al vuelo en cualquier comando con `--base-url`:
 ghub --base-url http://tu-servidor:8000 check SRR1972976
 ```
 
-## Comandos
+### Correo institucional
 
-### Sincronización
+Para no tener que pasar `--email` en cada descarga (o pasar por el menú
+interactivo la primera vez), puedes guardarlo y validarlo directamente:
 
 ```bash
-# Un solo proyecto
-ghub sync PRJNA12345
-
-# Varios proyectos (máximo 120, validado localmente antes de pegarle al backend)
-ghub sync-bulk PRJNA1 PRJNA2 PRJNA3
-
-# Desde un archivo de texto (un ID por línea)
-ghub sync-bulk --from-file ids.txt
-
-# Combinando archivo + args sueltos
-ghub sync-bulk PRJNA999 --from-file ids.txt
+ghub config set-email tu@correo.com    # lo valida contra la API y lo guarda
+ghub config unset-email                # lo olvida
+ghub config show                       # ver qué correo/URL están guardados
 ```
 
-Por defecto, `sync` y `sync-bulk` hacen polling del `task_id` resultante y
-muestran el resultado final. Usa `--no-poll` para solo encolar y salir.
+Una vez guardado, `ghub download <run_id>` lo usa automáticamente sin
+necesidad de la bandera `--email` (ver sección "Descarga" más abajo).
+
+## Comandos
+
+### Menú interactivo
+
+```bash
+ghub
+```
+
+Si corres `ghub` sin ningún subcomando, se activa un menú guiado en
+terminal para quien prefiere no memorizar flags. Tiene dos secciones:
+
+- **Consulta** — buscar en NCBI por texto libre, ver los datos de un ID
+  en Genomic-Hub o verificar si ya existe localmente. Cuando el resultado
+  tiene más de una página, aparece un submenú para navegar entre ellas
+  (`[n]` siguiente, `[p]` anterior, `[g]` ir a una página específica).
+- **Descarga** — el mismo flujo OTP de `ghub download`, pero guiado paso
+  a paso (pide el correo, el ID y el código de verificación uno por uno).
 
 ### Búsqueda y consulta
 
 ```bash
-ghub check SRR1972976              # ¿existe localmente?
-ghub search SRR1972976             # árbol de datos local
+ghub check SRR1972976                             # ¿existe localmente?
+ghub search SRR1972976                            # árbol de datos local
+ghub search PRJNA12345 --page 2 --page-size 10    # paginación de bioprojects/experiments
+ghub search SRR1972976 PRJNA12345 --json          # salida JSON cruda, sin formato de texto
 ghub explore "human genome" --page 1 --page-size 10   # busca en NCBI
-ghub task <task_id>                # estado de una tarea
-ghub task <task_id> --poll         # espera hasta que termine
+ghub task <task_id>                               # estado de una tarea
+ghub task <task_id> --poll                        # espera hasta que termine
 ```
+
+### Exportación de metadatos
+
+```bash
+ghub export PRJNA12345                           # exporta a PRJNA12345_export.csv
+ghub export SRR1972976 --format json             # exporta a SRR1972976_export.json
+ghub export PRJNA12345 -f csv -o resultados.csv  # ruta de salida personalizada
+```
+
+Exporta el árbol completo de metadatos (bioproject → samples →
+experiments → runs) de un ID a un archivo CSV o JSON. Por defecto usa
+CSV y guarda el archivo como `<ID>_export.<formato>` en el directorio
+actual.
 
 ### Descarga (flujo OTP completo)
 
 ```bash
+# usa el correo guardado; si no hay ninguno, lo pide y lo guarda
+ghub download SRR1972976
+
+# usa este correo solo para esta corrida, sin sobrescribir el guardado
 ghub download SRR1972976 --email tu@correo.com
+
+# ruta de destino personalizada
+ghub download SRR1972976 -o ./data/SRR1972976.tar.gz
 ```
 
+`--email` es opcional:
+
+- Si lo pasas, se usa ese correo **solo para esta ejecución** — nunca
+  sobrescribe el que ya tengas guardado.
+- Si lo omites, se usa el correo guardado en
+  `~/.config/ghub-cli/config.json`.
+- Si no hay ninguno guardado, el CLI te lo pide, lo valida contra la API
+  y lo guarda para futuras sesiones (mismo comportamiento que el menú
+  interactivo).
+
 Esto hace todo el flujo en un solo comando:
-1. Solicita la descarga (`/download/request`)
-2. Te pide el código OTP que llega al correo
-3. Verifica el OTP (`/download/verify`)
-4. Espera a que el archivo esté listo
-5. Descarga el archivo al directorio actual (o a `-o/--output` si lo das)
+1. Resuelve el correo a usar (guardado / `--email` / lo pide y lo guarda)
+2. Solicita la descarga (`/download/request`)
+3. Si ese `run_id` nunca se había verificado con ese correo, te pide el
+   código OTP que llega por email (esta parte no se puede automatizar:
+   el código solo lo tienes tú, en tu correo). Si ya lo habías verificado
+   antes para ese mismo `run_id` + correo, se lo salta.
+4. Verifica el OTP (`/download/verify`)
+5. Espera a que el archivo esté listo (usa `--no-poll` para solo encolar
+   la preparación y salir, sin bloquear la terminal — luego retómalo con
+   `ghub task <task_id> --poll`)
+6. Descarga el archivo al directorio actual (o a `-o/--output` si lo das)
+
+> **Nota:** como el código OTP llega por correo, el comando sí se queda
+> esperando tu input (`click.prompt`) cuando el run es nuevo — no es
+> apto para correrlo desde un cron/script sin nadie enfrente. Si
+> necesitas eso, lo resolvemos separando `request`/`verify` en dos
+> subcomandos independientes.
 
 ### Administración
 
@@ -105,9 +162,10 @@ ghub register-email --admin-id 1 --name "Juan Pérez" --email juan@ejemplo.com
 
 ## Notas de seguridad
 
-- El límite de 120 IDs en `sync-bulk` se valida **antes** de llamar al
-  backend (evita requests innecesarios), pero el backend debe seguir
-  validándolo también — el CLI es una capa de UX, no el control de
-  seguridad real.
+- El límite de 120 IDs en `sync-bulk` se valida antes de llamar al backend (evita requests innecesarios), pero 
+  el backend debe seguir validándolo también — el CLI es una capa de UX, no el control de seguridad real.
 - `download` requiere pasar por el flujo OTP completo; no hay atajo para
   descargar sin haber verificado el código.
+- El correo se guarda en texto plano en `~/.config/ghub-cli/config.json`
+  tras ser validado contra la API. Pasar `--email` en un comando puntual
+  nunca sobrescribe ese valor guardado.

@@ -8,11 +8,12 @@ from ghub_cli.core.client import GenomicHubClient
 from ghub_cli.commands.interactive import main_menu
 
 # Comandos puros
-from ghub_cli.commands.search import search, check, explore
+from ghub_cli.commands.search import search, explore
 from ghub_cli.commands.export import export_metadata
 from ghub_cli.commands.download import download, task_status
 from ghub_cli.utils.email import validar_y_guardar_email
-
+from ghub_cli.commands.check import check
+from ghub_cli.commands.sync import sync 
 
 @click.group(invoke_without_command=True)
 @click.option("--base-url", default=None, help=f"URL base de la API (default: {DEFAULT_BASE_URL}).")
@@ -90,7 +91,7 @@ cli.add_command(explore)
 cli.add_command(export_metadata)
 cli.add_command(download)
 cli.add_command(task_status)
-
+cli.add_command(sync)
 
 if __name__ == "__main__":
     cli()

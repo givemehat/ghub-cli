@@ -4,7 +4,8 @@ Configuración persistente del CLI, guardada en ~/.config/ghub-cli/config.json
 import json
 from pathlib import Path
 
-DEFAULT_BASE_URL = "https://lety-b85m-d3h.tail7dea2c.ts.net"
+#DEFAULT_BASE_URL = "https://lety-b85m-d3h.tail7dea2c.ts.net"
+DEFAULT_BASE_URL = "http://localhost:8000"
 
 CONFIG_DIR = Path.home() / ".config" / "ghub-cli"
 CONFIG_PATH = CONFIG_DIR / "config.json"

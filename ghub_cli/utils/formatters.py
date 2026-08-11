@@ -19,11 +19,18 @@ def _print_item_pagination(pagination):
     page_size = pagination.get("page_size", 20)
     total_items = pagination.get("total_items", 0)
     paginas_totales = math.ceil(total_items / page_size) if page_size > 0 else 1
-    click.echo("─" * 80)
+    
+    click.echo("═" * 80)
     click.secho(f"Página {page} de {paginas_totales} ({page_size} items por página)", dim=True)
 
-
 def print_formatted_search_results(data_list):
+    if not data_list:
+        click.secho("No se encontraron datos.", fg="yellow")
+        return
+
+    if isinstance(data_list, dict):
+        data_list = data_list.get("data", [])
+
     if not data_list:
         click.secho("No se encontraron datos.", fg="yellow")
         return
@@ -31,25 +38,37 @@ def print_formatted_search_results(data_list):
     click.echo()
 
     for idx, item in enumerate(data_list):
+        # Si ya pasamos el primer bloque, imprimimos un salto de línea limpio 
+        # (por fuera de las líneas divisorias) para separarlo del siguiente.
         if idx > 0:
-            click.echo("\n" + "═" * 80 + "\n")
-        else:
-            click.echo("═" * 80)
+            click.echo() 
+            
+        click.echo("═" * 80) # Borde superior del bloque actual
 
-        if "bioproject_accession" in item:
+        cli_type = item.get("_cli_type")
+        
+        # Respaldo por si no viene el tag (ej. consultas internas directas)
+        if not cli_type:
+            if "bioproject_accession" in item:
+                cli_type = "bioproject"
+            elif "experiments" in item:
+                cli_type = "experiment"
+            else:
+                cli_type = "unknown"
+
+        if cli_type == "bioproject":
             _print_bioproject(item)
-        elif "sample_accession" in item:
+        elif cli_type == "sample":
             _print_sample(item)
-        elif "run_accession" in item:
+        elif cli_type == "run":
             _print_run(item)
-        elif "bioproject" in item and "experiments" in item:
+        elif cli_type == "experiment":
             _print_experiment(item)
         else:
             click.secho("Ítem genérico", bold=True)
             click.echo(pretty_json(item))
-
-    click.echo("═" * 80)
-
+            
+        click.echo("═" * 80)
 
 # =========================================
 # Funciones Auxiliares
@@ -95,18 +114,17 @@ def _render_bioproject_block(proj_dict, include_pubs=False):
 
 def _render_experiments_table(experiments):
     """Renderiza una lista de experimentos en formato de tabla plana."""
-    if not experiments:
-        return
-        
+    # Imprimimos la línea divisoria SIEMPRE, haya o no haya datos
     click.echo("═" * 80)
-    # Sin la columna MODEL y restaurando anchos base
+    
+    if not experiments:
+        return # Si está vacío, se sale aquí dejando la línea "hueca"
+        
     click.secho(f"{'EXPERIMENT':<14} {'PLATFORM':<12} {'STRATEGY':<12} {'TITLE'}", bold=True)
     for exp in experiments:
         e_acc = str(exp.get("experiment_accession") or "-")[:14]
         e_plat = str(exp.get("platform") or "-")[:12]
         e_strat = str(exp.get("library_strategy") or exp.get("strategy") or "-")[:12]
-        
-        # El título ya no se corta, se imprime completo
         e_title = str(exp.get("title") or "")
         
         click.echo(f"{e_acc:<14} {e_plat:<12} {e_strat:<12} {e_title}")
@@ -191,7 +209,13 @@ def _print_bioproject(item):
     proj = item.get("bioproject") if "bioproject" in item else item
     _render_bioproject_block(proj, include_pubs=True)
     _render_experiments_table(item.get("experiments", []))
-    _print_item_pagination(item.get("pagination"))
+    
+    pagination = item.get("pagination") or {
+        "page": item.get("page", 1),
+        "page_size": item.get("page_size", 20),
+        "total_items": item.get("total_items", len(item.get("experiments", [])))
+    }
+    _print_item_pagination(pagination)
 
 
 def _print_experiment(item):
@@ -225,6 +249,9 @@ def _print_experiment(item):
                 bases = run.get("total_bases") or 0
                 pub = str(run.get("published_date") or "-")[:10]
                 click.echo(f"{r_acc:<15} {spots:<15,} {bases:<15,} {pub}")
+        else:
+            # Línea para sellar visualmente el espacio vacío si no hay runs
+            click.echo("═" * 80)
 
         _print_item_pagination(exp.get("pagination"))
 
@@ -234,11 +261,18 @@ def _print_sample(item):
     if proj:
         _render_bioproject_block(proj, include_pubs=False)
 
-    # Ahora renderizamos los experimentos ANTES de la muestra
-    _render_experiments_table(item.get("experiments", []))
+    experiments = item.get("experiments", [])
+    _render_experiments_table(experiments)
     
-    click.echo("═" * 80)
-    _render_single_sample(item)
+    # Extraemos las muestras anidadas y eliminamos duplicados visuales
+    seen_samples = set()
+    for exp in experiments:
+        for samp in exp.get("samples", []):
+            s_acc = samp.get("sample_accession")
+            if s_acc and s_acc not in seen_samples:
+                click.echo("═" * 80)
+                _render_single_sample(samp)
+                seen_samples.add(s_acc)
 
 
 def _print_run(item):
@@ -246,8 +280,43 @@ def _print_run(item):
     if proj:
         _render_bioproject_block(proj, include_pubs=False)
     
-    # Ahora renderizamos los experimentos ANTES del run
-    _render_experiments_table(item.get("experiments", []))
+    experiments = item.get("experiments", [])
+    _render_experiments_table(experiments)
     
+    # Extraemos los runs anidados
+    seen_runs = set()
+    for exp in experiments:
+        for run in exp.get("runs", []):
+            r_acc = run.get("run_accession")
+            if r_acc and r_acc not in seen_runs:
+                click.echo("═" * 80)
+                _render_single_run(run)
+                seen_runs.add(r_acc)
+                
+
+def print_formatted_explore_results(data_list, pagination=None):
+    """Imprime los resultados del comando explore con el estilo visual de la CLI."""
+    if not data_list:
+        click.secho("No se encontraron resultados.", fg="yellow")
+        return
+
+    for idx, r in enumerate(data_list):
+            
+        click.echo("═" * 80)
+        accession = r.get("bioproject_accession", "N/A")
+        organism = r.get("organism") or "No especificado"
+        title = r.get("title") or "Sin título"
+        proj_type = r.get("project_type") or "-"
+        
+        click.secho(f"BioProject : {accession} | {title}", bold=True)
+        click.echo(f"Organismo  : {organism}")
+        click.echo(f"Tipo       : {proj_type}")
+        
+        if r.get("url"):
+            click.echo(f"URL        : {r.get('url')}")
+            
+        click.echo("═" * 80)
+
+    
+    _print_item_pagination(pagination)
     click.echo("═" * 80)
-    _render_single_run(item)

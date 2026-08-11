@@ -26,3 +26,7 @@ eggs/
 .idea/
 *.swp
 *.DS_Store
+
+*.csv
+*.zip
+*.json

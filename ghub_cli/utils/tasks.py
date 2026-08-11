@@ -50,15 +50,16 @@ def poll_task(
             if status in TERMINAL_STATES:
                 sys.stdout.write("\n")
                 sys.stdout.flush()
-                if status in SUCCESS_STATES:
-                    click.secho(f"✓ Tarea completada (task_id={task_id})", fg="green")
-                else:
-                    click.secho(f"✗ Tarea terminó con error (task_id={task_id})", fg="red")
-                    if result.get("detail"):
-                        click.secho(f"  detail: {result['detail']}", fg="red", dim=True)
-
-                if show_result and result.get("data") is not None:
-                    click.echo(pretty_json(result["data"]))
+                
+                # Si hay error y debemos mostrarlo, lo mostramos de forma limpia sin revelar UUIDs técnicos
+                if show_result:
+                    if status in FAILURE_STATES:
+                        click.secho(f"✗ La tarea falló.", fg="red")
+                        if result.get("detail"):
+                            click.secho(f"  detail: {result['detail']}", fg="red", dim=True)
+                    if result.get("data") is not None:
+                        click.echo(pretty_json(result["data"]))
+                        
                 return result
 
             time.sleep(interval)
@@ -68,12 +69,7 @@ def poll_task(
         sys.stdout.write("\n")
         sys.stdout.flush()
         click.secho(
-            f"⚠ Tiempo de espera agotado ({int(total_waited)}s). La tarea puede seguir corriendo.",
+            f"⚠ Tiempo de espera agotado ({int(total_waited)}s).",
             fg="yellow",
         )
-
-        if ask_to_continue and click.confirm("  ¿Seguir esperando?", default=True):
-            continue
-
-        click.secho(f"  Puedes consultarla más tarde con: ghub task {task_id} --poll", fg="yellow")
         return None
