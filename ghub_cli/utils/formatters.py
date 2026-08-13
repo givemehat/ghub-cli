@@ -96,6 +96,10 @@ def _render_bioproject_block(proj_dict, include_pubs=False):
         click.echo(f"URL Base   : {links['bioproject']}")
         
     click.echo(f"Tipo       : {proj_dict.get('project_type', '-')}")
+
+    p_organism = proj_dict.get("organism")
+    if p_organism:
+        click.echo(f"Organismo  : {p_organism}")
     
     p_abstract = proj_dict.get("abstract", "")
     if p_abstract:
