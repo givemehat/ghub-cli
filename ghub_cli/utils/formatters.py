@@ -6,6 +6,16 @@ from ghub_cli.core.client import APIError
 def pretty_json(data) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False)
 
+def format_size(size_bytes) -> str:
+    """Formatea bytes al estilo de NCBI (binario: 1 MB/GB = 1024^n)."""
+    if not size_bytes:
+        return "-"
+    size = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+
 def print_api_error(e: APIError) -> None:
     click.secho(f"✗ Error ({e.status_code}): {e.detail}", fg="red")
     if e.code:
@@ -200,6 +210,7 @@ def _render_single_run(r):
     bases = r.get("total_bases") or 0
     click.echo(f"Spots      : {spots:,}")
     click.echo(f"Bases      : {bases:,}")
+    click.echo(f"Tamaño     : {format_size(r.get('size_bytes'))}")
     
     alias = r.get("alias")
     if alias: click.echo(f"Alias      : {alias}")
@@ -246,13 +257,14 @@ def _print_experiment(item):
         runs = exp.get("runs", [])
         if runs:
             click.echo("═" * 80)
-            click.secho(f"{'RUN':<15} {'SPOTS':<15} {'BASES':<15} {'PUBLISHED'}", bold=True)
+            click.secho(f"{'RUN':<15} {'SPOTS':<15} {'BASES':<15} {'SIZE':<12} {'PUBLISHED'}", bold=True)
             for run in runs:
                 r_acc = run.get("run_accession") or "-"
                 spots = run.get("total_spots") or 0
                 bases = run.get("total_bases") or 0
+                size = format_size(run.get("size_bytes"))
                 pub = str(run.get("published_date") or "-")[:10]
-                click.echo(f"{r_acc:<15} {spots:<15,} {bases:<15,} {pub}")
+                click.echo(f"{r_acc:<15} {spots:<15,} {bases:<15,} {size:<12} {pub}")
         else:
             # Línea para sellar visualmente el espacio vacío si no hay runs
             click.echo("═" * 80)

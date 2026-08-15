@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../../../genomic-hub"
+		},
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../genomic-hub-frontend"
+		}
+	],
+	"settings": {}
+}
