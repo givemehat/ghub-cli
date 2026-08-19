@@ -153,7 +153,7 @@ ghub explore "QUERY" [OPCIONES]
 
 ---
 
-### Manual Detallado: `ghub export`
+### `ghub export`
 
 El comando `export` extrae y formatea el árbol completo de metadatos asociado a uno o múltiples identificadores. Se encarga de verificar, sincronizar (si es necesario) y empaquetar los datos en estructuras óptimas para el análisis bioinformático.
 
