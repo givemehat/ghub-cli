@@ -96,8 +96,14 @@ class GenomicHubClient:
         return self._post("/runs", payload)
 
     def export_full_branch(self, target_id: str, mask: dict = None) -> dict:
-        # Alineado con export_router.py (/export/{target_id})
-        return self._post(f"/export/{target_id}", mask or {})
+            # Alineado con export_router.py (/export/{target_id})
+            return self._post(f"/export/{target_id}", mask or {})
+    
+    # <--- NUEVO MÉTODO PARA BATCH --->
+    def export_full_branch_batch(self, ids: List[str], mask: dict = None) -> dict:
+        payload = {"ids": ids}
+        if mask: payload["mask"] = mask
+        return self._post("/export/bulk", payload)
 
     # ---------- downloads ----------
     def request_download(self, run_id: str, email: str) -> dict:

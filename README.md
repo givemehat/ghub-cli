@@ -1,162 +1,254 @@
 # ghub-cli
 
-CLI de línea de comandos para `genomic-hub`: sincronización masiva de
-proyectos, búsqueda de metadatos y descarga de secuencias con flujo OTP.
-Pensado para staff/admins que necesitan operar lotes grandes sin pasar por
-el frontend (límite de 120 IDs por sync, vs. 12 que aplica el front).
+Interfaz de línea de comandos (CLI) para la API de `genomic-hub`. Permite consulta de metadatos, sincronización masiva desde NCBI, exportación formateada y descarga segura de secuencias (OTP).
 
-## Estructura
+Optimizado para personal técnico/operativo. Soporta lotes de hasta 120 IDs por operación, superando límites de la web.
 
-```
+## Estructura del Proyecto
+
+```text
 genomic-hub-cli/
-├── README.md
-├── pyproject.toml        # empaquetado, registra el comando `ghub`
-└── ghub_cli/
-    ├── __init__.py
-    ├── cli.py             # comandos de Click (sync, download, check, etc.)
-    ├── client.py          # wrapper HTTP sobre la API (rutas + manejo de errores)
-    ├── config.py          # persistencia de --base-url en ~/.config/ghub-cli/
-    └── utils/
-        ├── email.py       # resolución/validación/guardado del correo de descarga
-        └── tasks.py       # polling de tareas Celery + spinner de progreso
+├── pyproject.toml        # Empaquetado y dependencias. Registra comando `ghub`.
+└── app/
+    ├── cli.py             # Punto de entrada, definición de grupos y comandos Click.
+    ├── core/
+    │   ├── client.py      # Cliente HTTP delgado sobre la API.
+    │   └── config.py      # Manejo de configuración persistente (~/.config/ghub-cli/).
+    ├── commands/
+    │   ├── check.py       # Verificar existencia local de IDs.
+    │   ├── sync.py        # Sincronizar datos desde NCBI.
+    │   ├── search.py      # Consultar datos locales.
+    │   ├── explore.py     # Buscar BioProjects en NCBI (texto libre).
+    │   ├── export.py      # Exportar metadatos (CSV/JSON).
+    │   ├── download.py    # Descarga de secuencias (flujo OTP).
+    │   └── interactive.py # Menú interactivo guiado (legacy).
+    └── utils/             # Utilidades internas (formato, identificadores, etc.)
+
 ```
 
 ## Instalación
 
+Requiere Python 3.8+.
+
 ```bash
 cd genomic-hub-cli
 pip install -e .
+
 ```
 
-Esto instala el comando `ghub` en tu PATH.
+Esto instalará las dependencias necesarias y registrará el comando `ghub` en tu sistema.
 
-## Configuración
+## Opciones Globales
 
-Por defecto apunta a `http://127.0.0.1:8000`. Para cambiarlo de forma
-persistente:
+Estas opciones se aplican a **cualquier** comando de `ghub` y se colocan antes del subcomando.
+
+| Opción | Descripción | Ejemplo de uso con bandera |
+| --- | --- | --- |
+| `--base-url TEXT` | Sobrescribe temporalmente la URL de la API. | `ghub --base-url http://localhost:8000 check PRJNA257197` |
+| `--timeout INTEGER` | Tiempo de espera de red en segundos. | `ghub --timeout 60 search PRJNA257197` |
+
+## Configuración Persistente
+
+Gestiona la configuración guardada en `~/.config/ghub-cli/config.json`.
 
 ```bash
-ghub config set-url http://tu-servidor:8000
-ghub config show
+ghub config COMANDO [ARGUMENTOS]
+
 ```
 
-O pásalo al vuelo en cualquier comando con `--base-url`:
+### Comandos de Configuración
+
+| Comando | Descripción | Ejemplo |
+| --- | --- | --- |
+| `set-url URL` | Guarda la URL base de la API. | `ghub config set-url https://api.genomichub.unam.mx` |
+| `set-email EMAIL` | Valida y guarda el correo para descargas. | `ghub config set-email usuario@unam.mx` |
+| `unset-email` | Olvida el correo guardado. | `ghub config unset-email` |
+| `show` | Muestra la configuración actual. | `ghub config show` |
+
+---
+
+## Referencia de Comandos Principales
+
+### `ghub check`
+
+Verifica si IDs existen en Genomic Hub local. No consulta NCBI.
+
+**Sintaxis:**
 
 ```bash
-ghub --base-url http://tu-servidor:8000 check SRR1972976
+ghub check [IDS...] [OPCIONES]
+
 ```
 
-### Correo institucional
+**Opciones:**
 
-Para no tener que pasar `--email` en cada descarga (o pasar por el menú
-interactivo la primera vez), puedes guardarlo y validarlo directamente:
+| Opción | Descripción | Ejemplo de uso con bandera |
+| --- | --- | --- |
+| `--json` | Muestra la respuesta en formato JSON crudo. | `ghub check SRP045416 --json` |
+
+### `ghub sync`
+
+Sincroniza metadatos desde NCBI al servidor local. Necesario para IDs "Faltantes".
+
+**Sintaxis:**
 
 ```bash
-ghub config set-email tu@correo.com    # lo valida contra la API y lo guarda
-ghub config unset-email                # lo olvida
-ghub config show                       # ver qué correo/URL están guardados
+ghub sync [IDS...] [OPCIONES]
+
 ```
 
-Una vez guardado, `ghub download <run_id>` lo usa automáticamente sin
-necesidad de la bandera `--email` (ver sección "Descarga" más abajo).
+**Opciones:**
 
-## Comandos
+| Opción | Descripción | Ejemplo de uso con bandera |
+| --- | --- | --- |
+| `-w, --wait` | Bloquea la terminal y muestra un spinner de progreso en tiempo real hasta que la sincronización finalice en el servidor. | `ghub sync PRJNA257197 --wait` |
+| `--json` | Muestra la respuesta inicial de la API en JSON. | `ghub sync SRP045416 --json` |
 
-### Menú interactivo
+### `ghub search`
+
+Consulta metadatos locales. Intenta sincronizar automáticamente si el ID falta.
+
+**Sintaxis:**
 
 ```bash
-ghub
+ghub search [IDS...] [OPCIONES]
+
 ```
 
-Si corres `ghub` sin ningún subcomando, se activa un menú guiado en
-terminal para quien prefiere no memorizar flags. Tiene dos secciones:
+**Argumentos:**
 
-- **Consulta** — buscar en NCBI por texto libre, ver los datos de un ID
-  en Genomic-Hub o verificar si ya existe localmente. Cuando el resultado
-  tiene más de una página, aparece un submenú para navegar entre ellas
-  (`[n]` siguiente, `[p]` anterior, `[g]` ir a una página específica).
-- **Descarga** — el mismo flujo OTP de `ghub download`, pero guiado paso
-  a paso (pide el correo, el ID y el código de verificación uno por uno).
+* **`[IDS...]`**: Uno o varios identificadores válidos de NCBI separados por espacios.
 
-### Búsqueda y consulta
+**Opciones:**
+
+| Opción | Descripción | Ejemplo de uso con bandera |
+| --- | --- | --- |
+| `--page INTEGER` | Número de página para resultados paginados (defecto: 1). | `ghub search PRJNA257197 --page 2` |
+| `--page-size INT` | Elementos por página (defecto: 20). | `ghub search SRP045416 --page-size 50` |
+| `--json` | Salida en JSON crudo. | `ghub search SRR1972976 --json` |
+
+### `ghub explore`
+
+Busca BioProjects en NCBI por texto libre.
+
+**Sintaxis:**
 
 ```bash
-ghub check SRR1972976                             # ¿existe localmente?
-ghub search SRR1972976                            # árbol de datos local
-ghub search PRJNA12345 --page 2 --page-size 10    # paginación de bioprojects/experiments
-ghub search SRR1972976 PRJNA12345 --json          # salida JSON cruda, sin formato de texto
-ghub explore "human genome" --page 1 --page-size 10   # busca en NCBI
-ghub task <task_id>                               # estado de una tarea
-ghub task <task_id> --poll                        # espera hasta que termine
+ghub explore "QUERY" [OPCIONES]
+
 ```
 
-### Exportación de metadatos
+**Argumentos:**
+
+* **`"QUERY"`**: Cadena de búsqueda para NCBI entre comillas.
+
+**Opciones:**
+
+| Opción | Descripción | Ejemplo de uso con bandera |
+| --- | --- | --- |
+| `--page INTEGER` | Número de página (defecto: 1). | `ghub explore "ebola siera leone" --page 3` |
+| `--page-size INT` | Elementos por página (defecto: 20). | `ghub explore "transcriptome human" --page-size 10` |
+| `-i, --ids` | Muestra únicamente los IDs de los BioProjects encontrados (útil para scripts). | `ghub explore "Zaire ebolavirus" --ids` |
+| `--json` | Salida en JSON crudo. | `ghub explore "PRJNA257197" --json` |
+
+---
+
+### Manual Detallado: `ghub export`
+
+El comando `export` extrae y formatea el árbol completo de metadatos asociado a uno o múltiples identificadores. Se encarga de verificar, sincronizar (si es necesario) y empaquetar los datos en estructuras óptimas para el análisis bioinformático.
+
+#### Sintaxis
 
 ```bash
-ghub export PRJNA12345                           # exporta a PRJNA12345_export.csv
-ghub export SRR1972976 --format json             # exporta a SRR1972976_export.json
-ghub export PRJNA12345 -f csv -o resultados.csv  # ruta de salida personalizada
+ghub export [IDS...] [OPCIONES]
+
 ```
 
-Exporta el árbol completo de metadatos (bioproject → samples →
-experiments → runs) de un ID a un archivo CSV o JSON. Por defecto usa
-CSV y guarda el archivo como `<ID>_export.<formato>` en el directorio
-actual.
+#### Argumentos
 
-### Descarga (flujo OTP completo)
+* **`[IDS...]`**: Uno o varios identificadores válidos de NCBI separados por espacios (ej. `PRJNA257197`, `SRS908478`). El sistema rastreará toda la rama jerárquica relacionada.
+
+#### Opciones
+
+| Opción | Alias | Descripción |
+| --- | --- | --- |
+| `--format` |  | Define el formato de salida. Valores permitidos: `csv` (por defecto) o `json`. |
+| `--flat` | `-f` | *(Solo para CSV)*. Aplana toda la jerarquía relacional en una única tabla horizontal, ideal para análisis directo en Excel, Python (Pandas) o R. |
+| `--strict` | `-s` | Omite registros "huérfanos". Si una Muestra o Experimento no tiene archivos físicos finales asociados (*Runs*), no se incluirá en la exportación. |
+| `--out` | `-o` | Define la ruta y el nombre del archivo resultante. Si se omite, se genera automáticamente. |
+
+**Ejemplos de uso con banderas:**
+
+* `ghub export PRJNA257197 --flat --strict` (exportación CSV aplanada, omitiendo registros sin Runs).
+* `ghub export SRR1972976 --format json -o run_data.json` (exportación JSON cruda a archivo específico).
+
+**Modos de Exportación y Estructura**
+
+1. **Modo Estándar (ZIP Relacional)**
+Comando: `ghub export PRJNA257197`
+Genera un archivo `.zip` que contiene cuatro archivos CSV normalizados y relacionados entre sí mediante llaves foráneas (`bioproject_accession`, `sample_accession`, etc.):
+* `bioprojects.csv`
+* `samples.csv`
+* `experiments.csv`
+* `runs.csv`: Incluye la columna `size_bytes` con el tamaño crudo para cálculos numéricos.
+
+
+2. **Modo Aplanado (El "Data Mart")**
+Comando: `ghub export PRJNA257197 --flat`
+Combina las cuatro tablas en un solo archivo CSV expansivo.
+* **Estructura Visual:** Congela el mapa de identificadores a la izquierda (Macro ➔ Micro) y despliega los detalles descriptivos hacia la derecha.
+* **Atributos Dinámicos:** Los atributos biológicos de las muestras (Sample Attributes) se "explotan" automáticamente en columnas independientes y filtrables con el prefijo `attr_` (ej. `attr_host`, `attr_tissue`, `attr_collection_date`), eliminando los bloques de texto aglomerados.
+
+
+3. **Modo Desarrollador (JSON Crudo)**
+Comando: `ghub export PRJNA257197 --format json`
+Vuelca la estructura de árbol jerárquico cruda retornada por la API. Ideal para scripts o migración de datos.
+
+---
+
+### `ghub download`
+
+Descarga archivos de secuencia (Runs). Requiere un flujo de autenticación de contraseña de un solo uso (OTP).
+
+**Sintaxis:**
 
 ```bash
-# usa el correo guardado; si no hay ninguno, lo pide y lo guarda
-ghub download SRR1972976
+ghub download RUN_ID [OPCIONES]
 
-# usa este correo solo para esta corrida, sin sobrescribir el guardado
-ghub download SRR1972976 --email tu@correo.com
-
-# ruta de destino personalizada
-ghub download SRR1972976 -o ./data/SRR1972976.tar.gz
 ```
 
-`--email` es opcional:
+**Argumentos:**
 
-- Si lo pasas, se usa ese correo **solo para esta ejecución** — nunca
-  sobrescribe el que ya tengas guardado.
-- Si lo omites, se usa el correo guardado en
-  `~/.config/ghub-cli/config.json`.
-- Si no hay ninguno guardado, el CLI te lo pide, lo valida contra la API
-  y lo guarda para futuras sesiones (mismo comportamiento que el menú
-  interactivo).
+* **`RUN_ID`**: Identificador válido de Run de NCBI (ej. `SRR1972976`).
 
-Esto hace todo el flujo en un solo comando:
-1. Resuelve el correo a usar (guardado / `--email` / lo pide y lo guarda)
-2. Solicita la descarga (`/download/request`)
-3. Si ese `run_id` nunca se había verificado con ese correo, te pide el
-   código OTP que llega por email (esta parte no se puede automatizar:
-   el código solo lo tienes tú, en tu correo). Si ya lo habías verificado
-   antes para ese mismo `run_id` + correo, se lo salta.
-4. Verifica el OTP (`/download/verify`)
-5. Espera a que el archivo esté listo (usa `--no-poll` para solo encolar
-   la preparación y salir, sin bloquear la terminal — luego retómalo con
-   `ghub task <task_id> --poll`)
-6. Descarga el archivo al directorio actual (o a `-o/--output` si lo das)
+**Opciones:**
 
-> **Nota:** como el código OTP llega por correo, el comando sí se queda
-> esperando tu input (`click.prompt`) cuando el run es nuevo — no es
-> apto para correrlo desde un cron/script sin nadie enfrente. Si
-> necesitas eso, lo resolvemos separando `request`/`verify` en dos
-> subcomandos independientes.
+| Opción | Alias | Descripción |
+| --- | --- | --- |
+| `--email TEXT` |  | Correo institucional a usar para la descarga (sobrescribe temporalmente el correo guardado en la configuración). |
+| `--output TEXT` | `-o` | Ruta de destino (directorio o archivo específico .tar.gz). |
+| `--wait` | `-w` | Bloquea la terminal y muestra progreso en tiempo real hasta que el servidor termine de preparar el archivo y la descarga finalice automáticamente. |
 
-### Administración
+**Flujo:**
+Solicita el código OTP si es necesario. Sin `-w`, encola la tarea de preparación y finaliza. Con `-w`, espera a que finalice la preparación y procede a descargar el archivo automáticamente.
 
-```bash
-ghub register-email --admin-id 1 --name "Juan Pérez" --email juan@ejemplo.com
+**Ejemplos de uso con banderas:**
+
+* `ghub download SRR1972976 --email usuario@unam.mx` (usa este correo temporalmente).
+* `ghub download SRR1972976 -o ./mis_secuencias/` (personaliza la salida).
+* `ghub download SRR1972976 -w` (bloquea la terminal hasta descargar).
+
+---
+
+Tienes toda la razón. Ese límite de 120 IDs es una restricción general del backend para cualquier operación masiva (*bulk*) para garantizar la estabilidad del servidor.
+
+Aquí tienes la sección **Notas de Uso** del README actualizada para reflejar que este límite aplica a todos los comandos que aceptan múltiples IDs (como `check`, `sync`, `search` y `export`):
+
+---
+
+## Notas de Uso
+
+* **Límite de Operaciones Masivas (Bulk):** Existe un límite máximo de **120 IDs** por solicitud en cualquier comando que acepte múltiples identificadores (ej. `check`, `sync`, `search`, `export`). Si necesitas procesar más de 120 IDs, deberás dividir la lista y ejecutar el comando varias veces.
+* **Aplanado (`--flat`):** Ideal para análisis en Excel. Esta opción crea columnas filtrables independientes con el prefijo `attr_` para cada atributo biológico de la muestra, facilitando la organización de datos dispersos.
+* **Valores `missing`:** Es un estándar oficial de NCBI que indica que el investigador original no proporcionó ese dato específico para la muestra. No implica un error en la base de datos de Genomic Hub ni en la CLI.
 ```
-
-## Notas de seguridad
-
-- El límite de 120 IDs en `sync-bulk` se valida antes de llamar al backend (evita requests innecesarios), pero 
-  el backend debe seguir validándolo también — el CLI es una capa de UX, no el control de seguridad real.
-- `download` requiere pasar por el flujo OTP completo; no hay atajo para
-  descargar sin haber verificado el código.
-- El correo se guarda en texto plano en `~/.config/ghub-cli/config.json`
-  tras ser validado contra la API. Pasar `--email` en un comando puntual
-  nunca sobrescribe ese valor guardado.
