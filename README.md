@@ -99,10 +99,10 @@ ghub sync [IDS...] [OPCIONES]
 
 **Opciones:**
 
-| Opción | Descripción | Ejemplo de uso con bandera |
-| --- | --- | --- |
-| `-w, --wait` | Bloquea la terminal y muestra un spinner de progreso en tiempo real hasta que la sincronización finalice en el servidor. | `ghub sync PRJNA257197 --wait` |
-| `--json` | Muestra la respuesta inicial de la API en JSON. | `ghub sync SRP045416 --json` |
+| Opción | Alias | Descripción | Ejemplo de uso con bandera |
+| --- | --- | --- | --- |
+| `--wait` | `-w` | Bloquea la terminal y muestra un spinner de progreso en tiempo real hasta que la sincronización finalice en el servidor. | `ghub sync PRJNA257197 --wait` |
+| `--json` | | Muestra la respuesta inicial de la API en JSON. | `ghub sync SRP045416 --json` |
 
 ### `ghub search`
 
