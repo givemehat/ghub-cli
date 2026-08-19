@@ -148,7 +148,7 @@ def _render_experiment_block(exp_dict):
     """Renderiza el bloque detallado de un Experimento (para la vista de experimentos)"""
     e_acc = exp_dict.get("experiment_accession")
     if not e_acc or e_acc == "no_experiment":
-        click.secho(f"Experiment : Sin experimento asociado", dim=True)
+        click.secho("Experiment : Sin experimento asociado", dim=True)
         return
         
     e_plat = exp_dict.get("platform") or "-"

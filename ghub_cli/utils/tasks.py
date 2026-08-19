@@ -54,7 +54,7 @@ def poll_task(
                 # Si hay error y debemos mostrarlo, lo mostramos de forma limpia sin revelar UUIDs técnicos
                 if show_result:
                     if status in FAILURE_STATES:
-                        click.secho(f"✗ La tarea falló.", fg="red")
+                        click.secho("✗ La tarea falló.", fg="red")
                         if result.get("detail"):
                             click.secho(f"  detail: {result['detail']}", fg="red", dim=True)
                     if result.get("data") is not None:
